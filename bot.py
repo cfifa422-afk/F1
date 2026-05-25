@@ -382,21 +382,38 @@ def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: 
     return embed
 
 
-def build_spawn_content(card: Dict) -> str:
-    """Build plain-text spawn message content — image URL previews large, no embed box."""
-    rarity_emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+def build_spawn_embed(card: Dict) -> discord.Embed:
+    """Professional spawn embed — bold rarity color, large image, clean layout."""
+    rarity = card["rarity"]
+    color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
+    rarity_emoji = card_module.RARITY_EMOJIS.get(rarity, "")
+    rarity_label = rarity.upper()
+
     if card["type"] == "driver":
-        name_line = f"**Name:** {card['name']} ({card.get('code', '')})"
+        card_name = f"{card['name']} ({card.get('code', '')})"
+        card_icon = "👤"
+        team_line = card.get("team", "")
     else:
-        name_line = f"**Name:** {card['name']}"
+        card_name = card["name"]
+        card_icon = "🏎️"
+        team_line = card.get("team", "")
+
+    embed = discord.Embed(
+        title="🏁  A wild F1 card appeared!",
+        description=(
+            f"## {card_icon}  {card_name}\n"
+            f"{rarity_emoji}  **{rarity_label}**" +
+            (f"  ·  {team_line}" if team_line else "")
+        ),
+        color=color,
+    )
+
     img = f1_images.get_card_image(card)
-    lines = [
-        f"🏎️  **A wild F1 card appeared! Catch it!**",
-        f"{rarity_emoji} {card['rarity'].upper()}  ·  {name_line}",
-    ]
     if img:
-        lines.append(img)
-    return "\n".join(lines)
+        embed.set_image(url=img)
+
+    embed.set_footer(text="Click Catch me! and type the exact name to claim this card  ·  Expires in 5 minutes")
+    return embed
 
 
 def create_race_embed(race: RaceState, title: str) -> discord.Embed:
@@ -514,13 +531,24 @@ class SpawnView(discord.ui.View):
             child.disabled = True
         if self.message:
             try:
-                rarity_emoji = card_module.RARITY_EMOJIS.get(self.card["rarity"], "")
-                expired_text = (
-                    f"~~🏎️  **A wild F1 card appeared! Catch it!**~~\n"
-                    f"{rarity_emoji} {self.card['rarity'].upper()}  ·  **{self.card['name']}**\n"
-                    f"⏰ *This card fled — nobody caught it in time!*"
+                rarity = self.card["rarity"]
+                rarity_emoji = card_module.RARITY_EMOJIS.get(rarity, "")
+                color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
+                name = self.card["name"]
+                expired_embed = discord.Embed(
+                    title="⏰  This card has fled!",
+                    description=(
+                        f"~~**{name}**~~\n"
+                        f"{rarity_emoji}  **{rarity.upper()}**\n\n"
+                        f"*Nobody caught it in time.*"
+                    ),
+                    color=0x5C5C5C,
                 )
-                await self.message.edit(content=expired_text, view=self)
+                img = f1_images.get_card_image(self.card)
+                if img:
+                    expired_embed.set_image(url=img)
+                expired_embed.set_footer(text="Better luck next time!")
+                await self.message.edit(embed=expired_embed, view=self)
             except Exception:
                 pass
 
@@ -538,9 +566,9 @@ async def spawn_wild_card():
             continue
         try:
             card = card_module.generate_spawn_card()
-            content = build_spawn_content(card)
+            embed = build_spawn_embed(card)
             view = SpawnView(card)
-            msg = await channel.send(content=content, view=view)
+            msg = await channel.send(embed=embed, view=view)
             view.message = msg
             print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name})")
         except Exception as e:
