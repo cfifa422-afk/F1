@@ -93,6 +93,17 @@
               "fuel_saver"
             ],
             "obtained_at": "2026-05-25T07:14:09.048444"
+          },
+          {
+            "id": "driver_HAM_48771",
+            "type": "driver",
+            "name": "Lewis Hamilton",
+            "code": "HAM",
+            "skill": 8.8,
+            "team": "Mercedes",
+            "rarity": "legendary",
+            "perks": [],
+            "obtained_at": "2026-05-25T09:25:34.172077"
           }
         ],
         "cars": [
