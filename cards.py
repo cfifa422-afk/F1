@@ -11,6 +11,9 @@ DRIVERS = {
         {"name": "Lando Norris", "code": "NOR", "skill": 8.7, "team": "McLaren"},
         {"name": "Ayrton Senna", "code": "SEN", "skill": 9.5, "team": "McLaren"},
         {"name": "Michael Schumacher", "code": "MSC", "skill": 9.4, "team": "Ferrari"},
+        {"name": "Alain Prost", "code": "PRO", "skill": 9.1, "team": "McLaren"},
+        {"name": "Niki Lauda", "code": "NIK", "skill": 9.0, "team": "Ferrari"},
+        {"name": "Juan Manuel Fangio", "code": "FAN", "skill": 9.6, "team": "Mercedes"},
     ],
     "epic": [
         {"name": "Charles Leclerc", "code": "LEC", "skill": 8.3, "team": "Ferrari"},
@@ -18,6 +21,12 @@ DRIVERS = {
         {"name": "Carlos Sainz", "code": "SAI", "skill": 7.9, "team": "Ferrari"},
         {"name": "Fernando Alonso", "code": "ALO", "skill": 8.0, "team": "Aston Martin"},
         {"name": "Oscar Piastri", "code": "PIA", "skill": 7.8, "team": "McLaren"},
+        {"name": "Jim Clark", "code": "CLK", "skill": 8.9, "team": "Lotus"},
+        {"name": "Nigel Mansell", "code": "MAN", "skill": 8.4, "team": "Williams"},
+        {"name": "Damon Hill", "code": "HIL", "skill": 8.2, "team": "Williams"},
+        {"name": "Nico Rosberg", "code": "ROS", "skill": 8.0, "team": "Mercedes"},
+        {"name": "Jenson Button", "code": "BUT", "skill": 7.9, "team": "Brawn GP"},
+        {"name": "Kimi Raikkonen", "code": "RAI", "skill": 8.3, "team": "Ferrari"},
     ],
     "rare": [
         {"name": "Yuki Tsunoda", "code": "TSU", "skill": 7.2, "team": "RB"},
@@ -25,6 +34,8 @@ DRIVERS = {
         {"name": "Esteban Ocon", "code": "OCO", "skill": 7.1, "team": "Alpine"},
         {"name": "Valtteri Bottas", "code": "BOT", "skill": 7.4, "team": "Alfa Romeo"},
         {"name": "Kevin Magnussen", "code": "MAG", "skill": 7.0, "team": "Haas"},
+        {"name": "Sergio Perez", "code": "PER", "skill": 7.6, "team": "Red Bull"},
+        {"name": "Mark Webber", "code": "WEB", "skill": 7.8, "team": "Red Bull"},
     ],
     "common": [
         {"name": "Lance Stroll", "code": "STR", "skill": 6.5, "team": "Aston Martin"},

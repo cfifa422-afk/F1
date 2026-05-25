@@ -9,6 +9,7 @@ import random
 
 from database import Database
 import cards as card_module
+import f1_images
 
 # ==================== BOT SETUP ====================
 
@@ -358,6 +359,18 @@ def build_pack_embed(pack_cards: List[Dict], pack_type: str, user: discord.User,
             value += f"\n✨ Perk: *{perk_name}*"
 
         embed.add_field(name=name, value=value, inline=False)
+
+    # Thumbnail = image of the highest-rarity card that has one
+    for rarity in ("legendary", "epic", "rare", "common"):
+        for card in pack_cards:
+            if card["rarity"] == rarity:
+                img = f1_images.get_card_image(card)
+                if img:
+                    embed.set_thumbnail(url=img)
+                    break
+        else:
+            continue
+        break
 
     embed.set_footer(text=f"Use /pack daily & /pack weekly for more cards!")
     return embed
@@ -1031,6 +1044,9 @@ class CardSelectView(discord.ui.View):
             embed.add_field(name="Rarity", value=f"{emoji} {card['rarity'].title()}", inline=True)
             if card.get("perks"):
                 embed.add_field(name="✨ Perk", value=card["perks"][0].replace("_", " ").title(), inline=True)
+            img = f1_images.get_card_image(card)
+            if img:
+                embed.set_thumbnail(url=img)
             embed.set_footer(text="Your equipped card will be used in your next !race")
         else:
             embed = discord.Embed(title="❌ Error", description="Could not equip that card.", color=0xE74C3C)
@@ -1217,6 +1233,9 @@ class CollectionView(discord.ui.View):
         equipped = db.get_equipped(self.player_id)
         is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
         detail.add_field(name="Status", value="⚙️ **Currently Equipped**" if is_equipped else "Not equipped", inline=True)
+        img = f1_images.get_card_image(card)
+        if img:
+            detail.set_image(url=img)
         detail.set_footer(text=f"ID: {card['id']}")
 
         await interaction.response.send_message(embed=detail, ephemeral=True)
