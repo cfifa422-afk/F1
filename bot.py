@@ -1234,7 +1234,7 @@ class CardSelectView(discord.ui.View):
                 embed.add_field(name="✨ Perk", value=card["perks"][0].replace("_", " ").title(), inline=True)
             img = f1_images.get_card_image(card)
             if img:
-                embed.set_thumbnail(url=img)
+                embed.set_image(url=img)
             embed.set_footer(text="Your equipped card will be used in your next !race")
         else:
             embed = discord.Embed(title="❌ Error", description="Could not equip that card.", color=0xE74C3C)
