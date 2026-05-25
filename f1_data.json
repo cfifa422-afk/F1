@@ -4,10 +4,10 @@
       "id": "1141690369445216326",
       "username": "krazymatrix_",
       "created_at": "2026-05-25T07:08:19.760767",
-      "coins": 0,
+      "coins": 500,
       "equipped": {
         "driver_id": "driver_HAM_48771",
-        "car_id": "car_AstonMartin_39297"
+        "car_id": "car_RedBull_71757"
       },
       "last_daily_pack": "2026-05-25T07:14:09.067306",
       "last_weekly_pack": "2026-05-25T07:09:05.727312",
@@ -32,19 +32,6 @@
             "rarity": "common",
             "perks": [],
             "obtained_at": "2026-05-25T07:08:19.761186"
-          },
-          {
-            "id": "driver_GAS_60354",
-            "type": "driver",
-            "name": "Pierre Gasly",
-            "code": "GAS",
-            "skill": 7.3,
-            "team": "Alpine",
-            "rarity": "rare",
-            "perks": [
-              "drs_specialist"
-            ],
-            "obtained_at": "2026-05-25T07:09:05.715499"
           },
           {
             "id": "driver_OCO_52834",
@@ -104,6 +91,67 @@
             "rarity": "legendary",
             "perks": [],
             "obtained_at": "2026-05-25T09:25:34.172077"
+          },
+          {
+            "id": "driver_PER_36265",
+            "type": "driver",
+            "name": "Sergio Perez",
+            "code": "PER",
+            "skill": 7.6,
+            "team": "Red Bull",
+            "rarity": "rare",
+            "perks": [
+              "tire_master"
+            ],
+            "obtained_at": "2026-05-25T11:42:05.205490"
+          },
+          {
+            "id": "driver_PRO_27475",
+            "type": "driver",
+            "name": "Alain Prost",
+            "code": "PRO",
+            "skill": 9.1,
+            "team": "McLaren",
+            "rarity": "legendary",
+            "perks": [
+              "drs_specialist"
+            ],
+            "obtained_at": "2026-05-25T11:42:05.206260"
+          },
+          {
+            "id": "driver_PER_23995",
+            "type": "driver",
+            "name": "Sergio Perez",
+            "code": "PER",
+            "skill": 7.6,
+            "team": "Red Bull",
+            "rarity": "rare",
+            "perks": [
+              "pit_crew_chief"
+            ],
+            "obtained_at": "2026-05-25T11:44:20.166181"
+          },
+          {
+            "id": "driver_GAS_77766",
+            "type": "driver",
+            "name": "Pierre Gasly",
+            "code": "GAS",
+            "skill": 7.3,
+            "team": "Alpine",
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-25T11:44:20.175587"
+          },
+          {
+            "id": "driver_HUL_71281",
+            "type": "driver",
+            "name": "Nico Hulkenberg",
+            "code": "HUL",
+            "skill": 6.9,
+            "team": "Haas",
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-25T11:44:20.176355"
           }
         ],
         "cars": [
@@ -185,6 +233,52 @@
               "fuel_saver"
             ],
             "obtained_at": "2026-05-25T09:31:51.354817"
+          },
+          {
+            "id": "car_Alpine_20322",
+            "type": "car",
+            "name": "Alpine A523",
+            "team": "Alpine",
+            "top_speed": 368,
+            "handling": 7.6,
+            "rarity": "rare",
+            "perks": [
+              "tire_master"
+            ],
+            "obtained_at": "2026-05-25T11:37:45.643194"
+          },
+          {
+            "id": "car_RedBull_71757",
+            "type": "car",
+            "name": "Red Bull RB19",
+            "team": "Red Bull",
+            "top_speed": 410,
+            "handling": 9.4,
+            "rarity": "legendary",
+            "perks": [],
+            "obtained_at": "2026-05-25T11:42:05.203090"
+          },
+          {
+            "id": "car_RB_10590",
+            "type": "car",
+            "name": "AlphaTauri AT04",
+            "team": "RB",
+            "top_speed": 358,
+            "handling": 7.1,
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-25T11:42:05.207027"
+          },
+          {
+            "id": "car_McLaren_78932",
+            "type": "car",
+            "name": "McLaren MCL36",
+            "team": "McLaren",
+            "top_speed": 385,
+            "handling": 8.3,
+            "rarity": "epic",
+            "perks": [],
+            "obtained_at": "2026-05-25T11:42:05.216704"
           }
         ]
       },

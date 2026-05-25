@@ -988,56 +988,104 @@ async def f1_collection(interaction: discord.Interaction, filter: str = "all"):
 
 BUYABLE_PACKS = ["bronze", "silver", "gold", "platinum"]
 
-PACK_BUTTON_STYLES = {
-    "bronze": discord.ButtonStyle.secondary,
-    "silver": discord.ButtonStyle.secondary,
-    "gold": discord.ButtonStyle.primary,
-    "platinum": discord.ButtonStyle.danger,
+PACK_CONTENTS = {
+    "bronze":   "Common & Rare F1 Cards",
+    "silver":   "Rare, Epic & occasional Legendary Cards",
+    "gold":     "Epic & Legendary F1 Cards",
+    "platinum": "Legendary F1 Cards — Guaranteed!",
 }
 
 
+def build_shop_embed(player_id: str) -> discord.Embed:
+    balance = db.get_coins(player_id)
+    embed = discord.Embed(
+        title="📦  Pack Shop",
+        description=(
+            "Purchase mystery packs to unlock exclusive F1 Cards!\n"
+            "✨ Each pack contains random cards based on rarity!"
+        ),
+        color=0xF39C12,
+    )
+    embed.add_field(name="💰 Your Coins", value=str(balance), inline=True)
+
+    pack_lines = []
+    for pack_key in BUYABLE_PACKS:
+        cfg = card_module.PACK_CONFIGS[pack_key]
+        guar = cfg.get("guaranteed")
+        guar_str = f" (Guaranteed {guar.title()}+)" if guar else ""
+        contents = PACK_CONTENTS.get(pack_key, "")
+        affordable = "" if balance >= cfg["cost"] else "  ❌"
+        pack_lines.append(
+            f"**{cfg['emoji']} {cfg['name']}**{affordable}\n"
+            f"└ Price: **{cfg['cost']:,} coins**\n"
+            f"└ {contents}{guar_str}\n"
+            f"└ {cfg['card_count']} card{'s' if cfg['card_count'] > 1 else ''} per pack"
+        )
+
+    embed.add_field(
+        name="Available Packs",
+        value="\n\n".join(pack_lines),
+        inline=False,
+    )
+    embed.set_footer(text="Purchase packs here, then reveal cards one by one!  Win races to earn more coins.")
+    return embed
+
+
 class ShopView(discord.ui.View):
-    """Interactive shop — one button per buyable pack tier."""
+    """Select-dropdown shop matching the clean reference design."""
 
     def __init__(self, player_id: str, user: discord.User):
-        super().__init__(timeout=60)
+        super().__init__(timeout=120)
         self.player_id = player_id
         self.user = user
+
+        balance = db.get_coins(player_id)
+        options = []
         for pack_key in BUYABLE_PACKS:
             cfg = card_module.PACK_CONFIGS[pack_key]
-            btn = discord.ui.Button(
-                label=f"{cfg['emoji']}  {cfg['name']}  —  {cfg['cost']:,} 💰",
-                style=PACK_BUTTON_STYLES[pack_key],
-                custom_id=pack_key,
-            )
-            btn.callback = self._make_callback(pack_key)
-            self.add_item(btn)
+            affordable = balance >= cfg["cost"]
+            label = f"{cfg['name']}  —  {cfg['cost']:,} coins"
+            desc = PACK_CONTENTS.get(pack_key, "")[:100]
+            options.append(discord.SelectOption(
+                label=label[:100],
+                value=pack_key,
+                description=desc,
+                emoji=cfg["emoji"],
+            ))
 
-    def _make_callback(self, pack_key: str):
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user.id:
-                await interaction.response.send_message("This isn't your shop menu!", ephemeral=True)
-                return
-            cfg = card_module.PACK_CONFIGS[pack_key]
-            cost = cfg["cost"]
-            balance = db.get_coins(self.player_id)
-            if balance < cost:
-                short = cost - balance
-                await interaction.response.send_message(
-                    f"❌ Not enough credits!  You have **{balance:,} 💰** but need **{cost:,} 💰**  (short by {short:,}).",
-                    ephemeral=True,
-                )
-                return
-            db.spend_coins(self.player_id, cost)
-            new_balance = db.get_coins(self.player_id)
-            pack_cards = card_module.generate_pack(pack_key)
-            view = PackOpeningView(self.player_id, pack_cards, interaction.user, pack_key)
-            await interaction.response.edit_message(
-                content=f"✅  Bought **{cfg['emoji']} {cfg['name']}** for **{cost:,} 💰**  ·  Balance: **{new_balance:,} 💰**",
-                embed=view.sealed_embed(),
-                view=view,
+        self.select = discord.ui.Select(
+            placeholder="Choose a pack to purchase…",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This isn't your shop menu!", ephemeral=True)
+            return
+        pack_key = self.select.values[0]
+        cfg = card_module.PACK_CONFIGS[pack_key]
+        cost = cfg["cost"]
+        balance = db.get_coins(self.player_id)
+        if balance < cost:
+            short = cost - balance
+            await interaction.response.send_message(
+                f"❌ Not enough coins!  You have **{balance:,}** but need **{cost:,}**  *(short by {short:,})*.",
+                ephemeral=True,
             )
-        return callback
+            return
+        db.spend_coins(self.player_id, cost)
+        new_balance = db.get_coins(self.player_id)
+        pack_cards = card_module.generate_pack(pack_key)
+        open_view = PackOpeningView(self.player_id, pack_cards, interaction.user, pack_key)
+        await interaction.response.edit_message(
+            content=f"✅  Bought **{cfg['emoji']} {cfg['name']}** for **{cost:,} coins**  ·  Remaining: **{new_balance:,} coins**",
+            embed=open_view.sealed_embed(),
+            view=open_view,
+        )
 
 
 @bot.tree.command(name="shop", description="Buy packs with your race credits")
@@ -1046,34 +1094,7 @@ async def shop_command(interaction: discord.Interaction):
     db.ensure_player(player_id, interaction.user.name)
     give_starter_cards(player_id, interaction.user.name)
 
-    balance = db.get_coins(player_id)
-    embed = discord.Embed(
-        title="🏪  F1 Card Shop",
-        color=0xF39C12,
-    )
-    lines = []
-    for pack_key in BUYABLE_PACKS:
-        cfg = card_module.PACK_CONFIGS[pack_key]
-        cards_n = cfg["card_count"]
-        guar = cfg.get("guaranteed")
-        guar_str = f"  ·  Guaranteed {guar.title()}+" if guar else ""
-        odds = cfg["odds"]
-        rates = (
-            f"👑 {int(odds['legendary']*100)}%  "
-            f"💜 {int(odds['epic']*100)}%  "
-            f"💙 {int(odds['rare']*100)}%  "
-            f"⚪ {int(odds['common']*100)}%"
-        )
-        affordable = "✅" if balance >= cfg["cost"] else "❌"
-        lines.append(
-            f"{affordable} **{cfg['emoji']} {cfg['name']}** — **{cfg['cost']:,} 💰**\n"
-            f"　{cards_n} cards{guar_str}\n"
-            f"　{rates}"
-        )
-    embed.description = "\n\n".join(lines)
-    embed.add_field(name="💰 Your Balance", value=f"**{balance:,}** credits", inline=False)
-    embed.set_footer(text="Earn credits by racing!  Win = +100 💰  ·  Loss = +25 💰")
-
+    embed = build_shop_embed(player_id)
     view = ShopView(player_id, interaction.user)
     await interaction.response.send_message(embed=embed, view=view)
 
