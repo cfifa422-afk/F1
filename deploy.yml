@@ -1,0 +1,123 @@
+name: Deploy F1 Discord Bot to Replit
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Lint with flake8
+      run: |
+        pip install flake8
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+      continue-on-error: true
+    
+    - name: Check code with pylint
+      run: |
+        pip install pylint
+        pylint bot.py --fail-under=7.0 || true
+      continue-on-error: true
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Deploy to Replit via Webhook
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const https = require('https');
+          
+          const replitWebhook = process.env.REPLIT_WEBHOOK;
+          if (!replitWebhook) {
+            console.log('⚠️ REPLIT_WEBHOOK not set. Skipping auto-deploy.');
+            return;
+          }
+          
+          const data = JSON.stringify({
+            message: 'New deployment triggered',
+            commit: context.sha,
+            ref: context.ref
+          });
+          
+          const options = {
+            hostname: new URL(replitWebhook).hostname,
+            path: new URL(replitWebhook).pathname,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': data.length
+            }
+          };
+          
+          return new Promise((resolve, reject) => {
+            const req = https.request(options, (res) => {
+              let body = '';
+              res.on('data', (chunk) => body += chunk);
+              res.on('end', () => {
+                console.log(`✅ Deployment status: ${res.statusCode}`);
+                resolve(body);
+              });
+            });
+            
+            req.on('error', reject);
+            req.write(data);
+            req.end();
+          });
+      env:
+        REPLIT_WEBHOOK: ${{ secrets.REPLIT_WEBHOOK }}
+      continue-on-error: true
+    
+    - name: Notify Deployment
+      run: |
+        echo "🚀 Bot deployed to Replit!"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref }}"
+
+  notify:
+    needs: [test, deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Send Discord Notification
+      uses: sarisia/actions-status-discord@v1
+      if: always()
+      with:
+        webhook_url: ${{ secrets.DISCORD_WEBHOOK }}
+        status: ${{ job.status }}
+        title: "F1 Bot Deployment"
+        description: |
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref }}
+          Status: ${{ job.status }}
+        color: 0x00ff00
+      continue-on-error: true
