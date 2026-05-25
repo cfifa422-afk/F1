@@ -21,7 +21,7 @@ class Database:
         return self._create_empty_db()
 
     def _create_empty_db(self) -> Dict:
-        return {"players": {}, "matches": [], "leaderboard": []}
+        return {"players": {}, "matches": [], "leaderboard": [], "spawn_channels": {}}
 
     def _save_data(self):
         with open(self.db_file, "w") as f:
@@ -279,6 +279,30 @@ class Database:
     def get_achievements(self, player_id: str) -> List[str]:
         player = self.get_player(player_id)
         return player["achievements"] if player else []
+
+    # ==================== SPAWN CHANNELS ====================
+
+    def get_spawn_channels(self, guild_id: str) -> List[int]:
+        self.data.setdefault("spawn_channels", {})
+        return self.data["spawn_channels"].get(guild_id, [])
+
+    def add_spawn_channel(self, guild_id: str, channel_id: int) -> bool:
+        self.data.setdefault("spawn_channels", {})
+        channels = self.data["spawn_channels"].setdefault(guild_id, [])
+        if channel_id not in channels:
+            channels.append(channel_id)
+            self._save_data()
+            return True
+        return False
+
+    def remove_spawn_channel(self, guild_id: str, channel_id: int) -> bool:
+        self.data.setdefault("spawn_channels", {})
+        channels = self.data["spawn_channels"].get(guild_id, [])
+        if channel_id in channels:
+            channels.remove(channel_id)
+            self._save_data()
+            return True
+        return False
 
 
 # ==================== STATIC DATA ====================

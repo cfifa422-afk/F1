@@ -9,7 +9,7 @@
         "driver_id": "starter_driver_1141690369445216326",
         "car_id": "starter_car_1141690369445216326"
       },
-      "last_daily_pack": null,
+      "last_daily_pack": "2026-05-25T07:14:09.067306",
       "last_weekly_pack": "2026-05-25T07:09:05.727312",
       "stats": {
         "wins": 0,
@@ -80,6 +80,19 @@
               "fuel_saver"
             ],
             "obtained_at": "2026-05-25T07:09:05.726630"
+          },
+          {
+            "id": "driver_ALB_51435",
+            "type": "driver",
+            "name": "Alex Albon",
+            "code": "ALB",
+            "skill": 6.8,
+            "team": "Williams",
+            "rarity": "common",
+            "perks": [
+              "fuel_saver"
+            ],
+            "obtained_at": "2026-05-25T07:14:09.048444"
           }
         ],
         "cars": [
@@ -104,6 +117,28 @@
             "rarity": "common",
             "perks": [],
             "obtained_at": "2026-05-25T07:09:05.716175"
+          },
+          {
+            "id": "car_AlfaRomeo_58172",
+            "type": "car",
+            "name": "Alfa Romeo C43",
+            "team": "Alfa Romeo",
+            "top_speed": 340,
+            "handling": 6.4,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-25T07:14:09.047854"
+          },
+          {
+            "id": "car_Williams_36221",
+            "type": "car",
+            "name": "Williams FW44",
+            "team": "Williams",
+            "top_speed": 338,
+            "handling": 6.2,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-25T07:14:09.058041"
           }
         ]
       },

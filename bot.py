@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
 import os
@@ -239,6 +239,8 @@ active_race_pairs: Dict = {}
 
 pack_group = app_commands.Group(name="pack", description="Open your F1 card packs")
 f1_group = app_commands.Group(name="f1", description="F1 card collection commands")
+config_group = app_commands.Group(name="config", description="Server configuration (admin only)")
+channels_group = app_commands.Group(name="channels", description="Manage card spawn channels", parent=config_group)
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -333,46 +335,82 @@ def get_player_race_cards(player_id: str):
     return race_car, race_driver
 
 
-def build_pack_embed(pack_cards: List[Dict], pack_type: str, user: discord.User, player_id: str) -> discord.Embed:
+def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: str) -> discord.Embed:
+    """Build a rich single-card embed with full-size photo."""
     config = card_module.PACK_CONFIGS[pack_type]
+    emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+    color = card_module.RARITY_COLORS.get(card["rarity"], 0x3498DB)
+    is_new = not db.has_card_name(player_id, card["name"], card["type"])
+
+    if card["type"] == "driver":
+        title = f"👤 {card['name']} ({card['code']})"
+    else:
+        title = f"🏎️ {card['name']}"
+
     embed = discord.Embed(
-        title=f"{config['emoji']} {config['name']} — {user.display_name}",
-        description=f"You opened **{len(pack_cards)} cards**!",
-        color=0xFFD700 if pack_type == "weekly" else 0x3498DB,
+        title=title,
+        description=(
+            f"{config['emoji']} **{config['name']}** — {user.display_name}\n"
+            f"{emoji} **{card['rarity'].upper()}**"
+            + ("  ✨ **NEW!**" if is_new else "  *(duplicate)*")
+        ),
+        color=color,
     )
 
-    for card in pack_cards:
-        emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
-        rarity_label = card["rarity"].upper()
-        is_new = not db.has_card_name(player_id, card["name"], card["type"])
-        new_badge = " ✨ **NEW!**" if is_new else " *(duplicate)*"
+    if card["type"] == "driver":
+        embed.add_field(name="🏁 Team", value=card["team"], inline=True)
+        embed.add_field(name="⭐ Skill", value=f"{card['skill']}/10", inline=True)
+    else:
+        embed.add_field(name="🏁 Team", value=card["team"], inline=True)
+        embed.add_field(name="💨 Top Speed", value=f"{card['top_speed']} km/h", inline=True)
+        embed.add_field(name="🎛️ Handling", value=f"{card.get('handling', '?')}/10", inline=True)
 
-        if card["type"] == "driver":
-            name = f"{emoji} {card['name']} ({card['code']}) — {rarity_label}"
-            value = f"Team: **{card['team']}** | Skill: **{card['skill']}/10**{new_badge}"
-        else:
-            name = f"{emoji} {card['name']} — {rarity_label}"
-            value = f"Team: **{card['team']}** | Top Speed: **{card['top_speed']}km/h**{new_badge}"
+    if card.get("perks"):
+        perk_key = card["perks"][0]
+        perk_data = card_module.PERKS.get(perk_key, {})
+        embed.add_field(
+            name="✨ Special Perk",
+            value=f"**{perk_data.get('name', perk_key)}** — {perk_data.get('description', '')}",
+            inline=False,
+        )
 
-        if card.get("perks"):
-            perk_name = card["perks"][0].replace("_", " ").title()
-            value += f"\n✨ Perk: *{perk_name}*"
+    img = f1_images.get_card_image(card)
+    if img:
+        embed.set_image(url=img)
 
-        embed.add_field(name=name, value=value, inline=False)
+    embed.set_footer(text="Added to collection! Use /f1 equip to race with it.")
+    return embed
 
-    # Thumbnail = image of the highest-rarity card that has one
-    for rarity in ("legendary", "epic", "rare", "common"):
-        for card in pack_cards:
-            if card["rarity"] == rarity:
-                img = f1_images.get_card_image(card)
-                if img:
-                    embed.set_thumbnail(url=img)
-                    break
-        else:
-            continue
-        break
 
-    embed.set_footer(text=f"Use /pack daily & /pack weekly for more cards!")
+def build_spawn_embed(card: Dict) -> discord.Embed:
+    """Build the wild-spawn embed shown in the channel."""
+    emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+    color = card_module.RARITY_COLORS.get(card["rarity"], 0x95A5A6)
+    rarity_label = card["rarity"].upper()
+
+    if card["type"] == "driver":
+        name_str = f"{card['name']} ({card['code']})"
+        stats = f"🏁 {card['team']}  |  ⭐ Skill {card['skill']}/10"
+    else:
+        name_str = card["name"]
+        stats = f"🏁 {card['team']}  |  💨 {card['top_speed']} km/h"
+
+    embed = discord.Embed(
+        title=f"🏎️ A wild F1 card appeared!",
+        description=f"{emoji} **{name_str}**\n{rarity_label}\n{stats}",
+        color=color,
+    )
+
+    if card.get("perks"):
+        perk_key = card["perks"][0]
+        perk_data = card_module.PERKS.get(perk_key, {})
+        embed.add_field(name="✨ Perk", value=perk_data.get("name", perk_key), inline=True)
+
+    img = f1_images.get_card_image(card)
+    if img:
+        embed.set_image(url=img)
+
+    embed.set_footer(text="Click 'Catch me!' to add this card to your collection!")
     return embed
 
 
@@ -407,11 +445,171 @@ async def on_ready():
         print(f"❌ Failed to sync slash commands: {e}")
     print(f"✅ Bot logged in as {bot.user}")
     print(f"🏁 F1 Card Racing Bot is ready!")
+    if not spawn_wild_card.is_running():
+        spawn_wild_card.start()
+        print("🃏 Wild card spawn loop started (30 min interval)")
+
+
+# ==================== WILD CARD SPAWN SYSTEM ====================
+
+class SpawnView(discord.ui.View):
+    """One-click catch button for wild spawns."""
+
+    def __init__(self, card: Dict):
+        super().__init__(timeout=1800)
+        self.card = card
+        self.caught = False
+
+    @discord.ui.button(label="🏎️ Catch me!", style=discord.ButtonStyle.success)
+    async def catch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.caught:
+            await interaction.response.send_message(
+                "❌ This card was already caught by someone else!", ephemeral=True
+            )
+            return
+
+        self.caught = True
+        button.disabled = True
+        button.label = "✅ Caught!"
+        button.style = discord.ButtonStyle.secondary
+
+        player_id = str(interaction.user.id)
+        db.ensure_player(player_id, interaction.user.name)
+        give_starter_cards(player_id, interaction.user.name)
+        db.add_card_to_player(player_id, self.card, self.card["type"])
+
+        emoji = card_module.RARITY_EMOJIS.get(self.card["rarity"], "")
+        if self.card["type"] == "driver":
+            name_str = f"{self.card['name']} ({self.card['code']})"
+        else:
+            name_str = self.card["name"]
+
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send(
+            f"🎉 {interaction.user.mention} caught **{name_str}**!\n"
+            f"Rarity: {emoji} **{self.card['rarity'].title()}**\n"
+            f"Added to your collection! Use `/f1 equip` to race with it."
+        )
+        self.stop()
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+
+@tasks.loop(minutes=30)
+async def spawn_wild_card():
+    """Spawn a wild card in all configured channels across all guilds."""
+    for guild in bot.guilds:
+        channel_ids = db.get_spawn_channels(str(guild.id))
+        if not channel_ids:
+            continue
+        channel_id = random.choice(channel_ids)
+        channel = guild.get_channel(int(channel_id))
+        if not channel:
+            continue
+        try:
+            card = card_module.generate_spawn_card()
+            embed = build_spawn_embed(card)
+            view = SpawnView(card)
+            await channel.send(embed=embed, view=view)
+            print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name})")
+        except Exception as e:
+            print(f"⚠️ Failed to spawn card in guild {guild.id}: {e}")
+
+
+@spawn_wild_card.before_loop
+async def before_spawn():
+    await bot.wait_until_ready()
+
+
+# ==================== CONFIG COMMANDS ====================
+
+def _is_admin(interaction: discord.Interaction) -> bool:
+    return (
+        interaction.user.guild_permissions.manage_guild
+        or interaction.user.guild_permissions.administrator
+    )
+
+
+@channels_group.command(name="add", description="Add a channel where F1 cards will spawn")
+@app_commands.describe(channel="The channel to add")
+async def config_channels_add(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ You need **Manage Server** permission to do this.", ephemeral=True)
+        return
+    guild_id = str(interaction.guild.id)
+    added = db.add_spawn_channel(guild_id, channel.id)
+    if added:
+        embed = discord.Embed(
+            title="✅ Spawn Channel Added",
+            description=f"{channel.mention} will now receive wild F1 card spawns every 30 minutes.",
+            color=0x2ECC71,
+        )
+        embed.add_field(
+            name="Drop Rates",
+            value="⚪ Common: 55%  |  💙 Rare: 30%  |  💜 Epic: 12%  |  👑 Legendary: 3%",
+            inline=False,
+        )
+    else:
+        embed = discord.Embed(
+            title="ℹ️ Already Added",
+            description=f"{channel.mention} is already a spawn channel.",
+            color=0x3498DB,
+        )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@channels_group.command(name="remove", description="Remove a card spawn channel")
+@app_commands.describe(channel="The channel to remove")
+async def config_channels_remove(interaction: discord.Interaction, channel: discord.TextChannel):
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ You need **Manage Server** permission to do this.", ephemeral=True)
+        return
+    guild_id = str(interaction.guild.id)
+    removed = db.remove_spawn_channel(guild_id, channel.id)
+    if removed:
+        embed = discord.Embed(
+            title="✅ Spawn Channel Removed",
+            description=f"{channel.mention} will no longer receive wild card spawns.",
+            color=0xE74C3C,
+        )
+    else:
+        embed = discord.Embed(
+            title="ℹ️ Not Found",
+            description=f"{channel.mention} was not a spawn channel.",
+            color=0x95A5A6,
+        )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@channels_group.command(name="list", description="List all configured card spawn channels")
+async def config_channels_list(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    channel_ids = db.get_spawn_channels(guild_id)
+    if not channel_ids:
+        embed = discord.Embed(
+            title="📋 Spawn Channels",
+            description="No spawn channels configured yet.\nUse `/config channels add #channel` to set one up.",
+            color=0x95A5A6,
+        )
+    else:
+        mentions = []
+        for cid in channel_ids:
+            ch = interaction.guild.get_channel(int(cid))
+            mentions.append(ch.mention if ch else f"<deleted channel {cid}>")
+        embed = discord.Embed(
+            title="📋 Spawn Channels",
+            description="\n".join(mentions),
+            color=0x3498DB,
+        )
+        embed.set_footer(text="Cards spawn every 30 minutes in one of these channels.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ==================== PACK SLASH COMMANDS ====================
 
-@pack_group.command(name="daily", description="Open your daily pack — 3 cards, resets every 24 hours")
+@pack_group.command(name="daily", description="Open your daily pack — 1 card, resets every 24 hours")
 async def pack_daily(interaction: discord.Interaction):
     player_id = str(interaction.user.id)
     db.ensure_player(player_id, interaction.user.name)
@@ -431,23 +629,15 @@ async def pack_daily(interaction: discord.Interaction):
     await interaction.response.defer()
 
     pack_cards = card_module.generate_pack("daily")
-    embed = build_pack_embed(pack_cards, "daily", interaction.user, player_id)
-
-    for card in pack_cards:
-        db.add_card_to_player(player_id, card, card["type"])
-
+    card = pack_cards[0]
+    db.add_card_to_player(player_id, card, card["type"])
     db.mark_daily_claimed(player_id)
 
-    new_count = sum(
-        1 for c in pack_cards
-        if db.has_card_name(player_id, c["name"], c["type"])
-    )
-
-    embed.set_footer(text=f"Cards added to your collection! Use /f1 equip to use them in races.")
+    embed = build_pack_embed(card, "daily", interaction.user, player_id)
     await interaction.followup.send(embed=embed)
 
 
-@pack_group.command(name="weekly", description="Open your weekly pack — 5 cards with better odds, resets every 7 days")
+@pack_group.command(name="weekly", description="Open your weekly pack — guaranteed Rare+, resets every 7 days")
 async def pack_weekly(interaction: discord.Interaction):
     player_id = str(interaction.user.id)
     db.ensure_player(player_id, interaction.user.name)
@@ -467,14 +657,11 @@ async def pack_weekly(interaction: discord.Interaction):
     await interaction.response.defer()
 
     pack_cards = card_module.generate_pack("weekly")
-    embed = build_pack_embed(pack_cards, "weekly", interaction.user, player_id)
-
-    for card in pack_cards:
-        db.add_card_to_player(player_id, card, card["type"])
-
+    card = pack_cards[0]
+    db.add_card_to_player(player_id, card, card["type"])
     db.mark_weekly_claimed(player_id)
 
-    embed.set_footer(text="🏆 Weekly pack claimed! Cards added to your collection. Use /f1 equip to race with them.")
+    embed = build_pack_embed(card, "weekly", interaction.user, player_id)
     await interaction.followup.send(embed=embed)
 
 
@@ -645,6 +832,7 @@ async def f1_collection(interaction: discord.Interaction, filter: str = "all"):
 
 bot.tree.add_command(pack_group)
 bot.tree.add_command(f1_group)
+bot.tree.add_command(config_group)
 
 
 # ==================== PREFIX RACE COMMANDS ====================

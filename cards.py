@@ -91,7 +91,7 @@ PACK_CONFIGS = {
     "daily": {
         "name": "Daily Pack",
         "emoji": "🗓️",
-        "card_count": 3,
+        "card_count": 1,
         "guaranteed": None,
         "odds": {
             "legendary": 0.01,
@@ -103,7 +103,7 @@ PACK_CONFIGS = {
     "weekly": {
         "name": "Weekly Pack",
         "emoji": "🏆",
-        "card_count": 5,
+        "card_count": 1,
         "guaranteed": "rare",
         "odds": {
             "legendary": 0.06,
@@ -113,6 +113,21 @@ PACK_CONFIGS = {
         },
     },
 }
+
+# ==================== WILD SPAWN ====================
+
+SPAWN_ODDS = {
+    "common": 0.55,
+    "rare": 0.30,
+    "epic": 0.12,
+    "legendary": 0.03,
+}
+
+
+def generate_spawn_card() -> Dict:
+    """Generate a single wild card using spawn drop rates."""
+    rarity = _roll_rarity(SPAWN_ODDS)
+    return _generate_card(rarity)
 
 # ==================== RARITY DISPLAY ====================
 
