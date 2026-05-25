@@ -7,7 +7,7 @@
       "coins": 0,
       "equipped": {
         "driver_id": "starter_driver_1141690369445216326",
-        "car_id": "starter_car_1141690369445216326"
+        "car_id": "car_Williams_76573"
       },
       "last_daily_pack": "2026-05-25T07:14:09.067306",
       "last_weekly_pack": "2026-05-25T07:09:05.727312",
@@ -139,6 +139,17 @@
             "rarity": "common",
             "perks": [],
             "obtained_at": "2026-05-25T07:14:09.058041"
+          },
+          {
+            "id": "car_Williams_76573",
+            "type": "car",
+            "name": "Williams FW44",
+            "team": "Williams",
+            "top_speed": 338,
+            "handling": 6.2,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-25T07:50:49.791254"
           }
         ]
       },

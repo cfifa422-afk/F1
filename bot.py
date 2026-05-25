@@ -383,34 +383,13 @@ def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: 
 
 
 def build_spawn_embed(card: Dict) -> discord.Embed:
-    """Build the wild-spawn embed shown in the channel."""
-    emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+    """Minimal spawn embed — just the photo, rarity color, footer hint. No name shown."""
     color = card_module.RARITY_COLORS.get(card["rarity"], 0x95A5A6)
-    rarity_label = card["rarity"].upper()
-
-    if card["type"] == "driver":
-        name_str = f"{card['name']} ({card['code']})"
-        stats = f"🏁 {card['team']}  |  ⭐ Skill {card['skill']}/10"
-    else:
-        name_str = card["name"]
-        stats = f"🏁 {card['team']}  |  💨 {card['top_speed']} km/h"
-
-    embed = discord.Embed(
-        title=f"🏎️ A wild F1 card appeared!",
-        description=f"{emoji} **{name_str}**\n{rarity_label}\n{stats}",
-        color=color,
-    )
-
-    if card.get("perks"):
-        perk_key = card["perks"][0]
-        perk_data = card_module.PERKS.get(perk_key, {})
-        embed.add_field(name="✨ Perk", value=perk_data.get("name", perk_key), inline=True)
-
+    embed = discord.Embed(color=color)
     img = f1_images.get_card_image(card)
     if img:
         embed.set_image(url=img)
-
-    embed.set_footer(text="Click 'Catch me!' to add this card to your collection!")
+    embed.set_footer(text="A wild F1 card appeared — click Catch me! and type its name to claim it.")
     return embed
 
 
@@ -452,45 +431,76 @@ async def on_ready():
 
 # ==================== WILD CARD SPAWN SYSTEM ====================
 
+class CatchModal(discord.ui.Modal, title="Catch the Card!"):
+    """Modal that asks the player to type the card name."""
+
+    answer = discord.ui.TextInput(
+        label="Type the name to claim this card",
+        placeholder="e.g. Lando Norris  or  McLaren MCL60",
+        style=discord.TextStyle.short,
+        max_length=60,
+    )
+
+    def __init__(self, card: Dict, spawn_view: "SpawnView"):
+        super().__init__()
+        self.card = card
+        self.spawn_view = spawn_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self.spawn_view.caught:
+            await interaction.response.send_message(
+                "Too slow — someone already caught this card!", ephemeral=True
+            )
+            return
+
+        entered = self.answer.value.strip().lower()
+        correct_name = self.card["name"].lower()
+        correct_code = self.card.get("code", "").lower()
+
+        if entered == correct_name or (correct_code and entered == correct_code):
+            self.spawn_view.caught = True
+            for child in self.spawn_view.children:
+                child.disabled = True
+
+            player_id = str(interaction.user.id)
+            db.ensure_player(player_id, interaction.user.name)
+            give_starter_cards(player_id, interaction.user.name)
+            db.add_card_to_player(player_id, self.card, self.card["type"])
+
+            rarity_label = self.card["rarity"].upper()
+            display = (
+                f"{self.card['name']} ({self.card['code']})"
+                if self.card["type"] == "driver"
+                else self.card["name"]
+            )
+            await interaction.response.edit_message(view=self.spawn_view)
+            await interaction.followup.send(
+                f"{interaction.user.mention} caught **{display}**!  ·  {rarity_label}\n"
+                f"Added to your collection. Use `/f1 equip` to race with it."
+            )
+            self.spawn_view.stop()
+        else:
+            await interaction.response.send_message(
+                f'Wrong name — try again!', ephemeral=True
+            )
+
+
 class SpawnView(discord.ui.View):
-    """One-click catch button for wild spawns."""
+    """Catch button for wild spawns — opens a name-entry modal."""
 
     def __init__(self, card: Dict):
         super().__init__(timeout=1800)
         self.card = card
         self.caught = False
 
-    @discord.ui.button(label="🏎️ Catch me!", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Catch me!", style=discord.ButtonStyle.success)
     async def catch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.caught:
             await interaction.response.send_message(
-                "❌ This card was already caught by someone else!", ephemeral=True
+                "This card was already caught!", ephemeral=True
             )
             return
-
-        self.caught = True
-        button.disabled = True
-        button.label = "✅ Caught!"
-        button.style = discord.ButtonStyle.secondary
-
-        player_id = str(interaction.user.id)
-        db.ensure_player(player_id, interaction.user.name)
-        give_starter_cards(player_id, interaction.user.name)
-        db.add_card_to_player(player_id, self.card, self.card["type"])
-
-        emoji = card_module.RARITY_EMOJIS.get(self.card["rarity"], "")
-        if self.card["type"] == "driver":
-            name_str = f"{self.card['name']} ({self.card['code']})"
-        else:
-            name_str = self.card["name"]
-
-        await interaction.response.edit_message(view=self)
-        await interaction.followup.send(
-            f"🎉 {interaction.user.mention} caught **{name_str}**!\n"
-            f"Rarity: {emoji} **{self.card['rarity'].title()}**\n"
-            f"Added to your collection! Use `/f1 equip` to race with it."
-        )
-        self.stop()
+        await interaction.response.send_modal(CatchModal(self.card, self))
 
     async def on_timeout(self):
         for child in self.children:
@@ -1317,36 +1327,29 @@ class CollectionView(discord.ui.View):
         page_cards = self._get_page_cards()
         equipped = db.get_equipped(self.player_id)
         embed = discord.Embed(
-            title=f"🎴 {self.display_name}'s Collection",
-            description=f"**{len(self.cards)}** cards total — Page **{self.page + 1}/{self.total_pages}**",
+            title=f"{self.display_name}'s Collection",
+            description=f"{len(self.cards)} cards  ·  Page {self.page + 1} of {self.total_pages}",
             color=0x2C3E50,
         )
         for card in page_cards:
-            emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+            rarity = card["rarity"].title()
             is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
-            equipped_tag = " ⚙️" if is_equipped else ""
+            eq = "  [Equipped]" if is_equipped else ""
 
             if card["type"] == "driver":
-                field_name = f"{emoji} {card['name']} ({card['code']}){equipped_tag}"
-                field_val = f"🏎️ {card['team']} | Skill: **{card['skill']}/10** | {card['rarity'].title()}"
+                field_name = f"{card['name']} ({card['code']}){eq}"
+                field_val = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {rarity}"
             else:
-                field_name = f"{emoji} {card['name']}{equipped_tag}"
-                field_val = f"🏎️ {card['team']} | **{card['top_speed']}km/h** | {card['rarity'].title()}"
-
-            obtained = card.get("obtained_at", "")
-            if obtained:
-                try:
-                    dt = datetime.fromisoformat(obtained)
-                    field_val += f"\n📅 {dt.strftime('%Y/%m/%d')}"
-                except Exception:
-                    pass
+                field_name = f"{card['name']}{eq}"
+                field_val = f"{card['team']}  ·  {card['top_speed']} km/h  ·  {rarity}"
 
             if card.get("perks"):
-                field_val += f"\n✨ *{card['perks'][0].replace('_', ' ').title()}*"
+                perk_name = card["perks"][0].replace("_", " ").title()
+                field_val += f"  ·  {perk_name}"
 
-            embed.add_field(name=field_name, value=field_val, inline=True)
+            embed.add_field(name=field_name, value=field_val, inline=False)
 
-        embed.set_footer(text="⚙️ = Equipped | Use /f1 equip to change loadout")
+        embed.set_footer(text="[Equipped] = active card  ·  /f1 equip to change loadout")
         return embed
 
     async def _check(self, interaction: discord.Interaction) -> bool:
@@ -1387,46 +1390,32 @@ class CollectionView(discord.ui.View):
             await interaction.response.send_message("Card not found.", ephemeral=True)
             return
 
-        emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
-        rarity_colors = card_module.RARITY_COLORS
-        detail = discord.Embed(
-            title=f"{emoji} {card['name']}",
-            color=rarity_colors.get(card["rarity"], 0x95A5A6),
-        )
-        detail.add_field(name="Rarity", value=f"{emoji} {card['rarity'].title()}", inline=True)
-        detail.add_field(name="Type", value=card["type"].title(), inline=True)
+        color = card_module.RARITY_COLORS.get(card["rarity"], 0x95A5A6)
+        equipped = db.get_equipped(self.player_id)
+        is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
 
         if card["type"] == "driver":
-            detail.add_field(name="Code", value=card["code"], inline=True)
-            detail.add_field(name="Team", value=card["team"], inline=True)
-            detail.add_field(name="Skill", value=f"{card['skill']}/10", inline=True)
+            title = f"{card['name']} ({card['code']})"
+            stats = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {card['rarity'].title()}"
         else:
-            detail.add_field(name="Team", value=card["team"], inline=True)
-            detail.add_field(name="Top Speed", value=f"{card['top_speed']}km/h", inline=True)
-            detail.add_field(name="Handling", value=f"{card.get('handling', '?')}/10", inline=True)
+            title = card["name"]
+            stats = f"{card['team']}  ·  {card['top_speed']} km/h  ·  Handling {card.get('handling', '?')}/10  ·  {card['rarity'].title()}"
+
+        if is_equipped:
+            stats += "  ·  Equipped"
 
         if card.get("perks"):
             perk_key = card["perks"][0]
             perk_data = card_module.PERKS.get(perk_key, {})
-            detail.add_field(name="✨ Perk", value=f"**{perk_data.get('name', perk_key)}**\n*{perk_data.get('description', '')}*", inline=False)
+            stats += f"\n{perk_data.get('name', perk_key)} — {perk_data.get('description', '')}"
 
-        obtained = card.get("obtained_at", "")
-        if obtained:
-            try:
-                dt = datetime.fromisoformat(obtained)
-                detail.add_field(name="📅 Obtained", value=dt.strftime("%B %d, %Y"), inline=True)
-            except Exception:
-                pass
+        detail = discord.Embed(title=title, description=stats, color=color)
 
-        equipped = db.get_equipped(self.player_id)
-        is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
-        detail.add_field(name="Status", value="⚙️ **Currently Equipped**" if is_equipped else "Not equipped", inline=True)
         img = f1_images.get_card_image(card)
         if img:
             detail.set_image(url=img)
-        detail.set_footer(text=f"ID: {card['id']}")
 
-        await interaction.response.send_message(embed=detail, ephemeral=True)
+        await interaction.response.send_message(embed=detail)
 
     async def _on_quit(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
