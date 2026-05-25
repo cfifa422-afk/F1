@@ -198,6 +198,26 @@ class Database:
                 return card
         return None
 
+    def remove_card(self, player_id: str, card_id: str) -> bool:
+        """Remove a card from player's collection by card ID. Returns True if removed."""
+        player = self.get_player(player_id)
+        if not player:
+            return False
+        for key in ("drivers", "cars"):
+            lst = player["cards"][key]
+            for i, card in enumerate(lst):
+                if card["id"] == card_id:
+                    lst.pop(i)
+                    # Un-equip if this was equipped
+                    equipped = player.get("equipped", {})
+                    if equipped.get("driver_id") == card_id:
+                        equipped["driver_id"] = None
+                    if equipped.get("car_id") == card_id:
+                        equipped["car_id"] = None
+                    self._save_data()
+                    return True
+        return False
+
     def has_card_name(self, player_id: str, name: str, card_type: str) -> bool:
         """Check if player already owns a card with this exact name."""
         player = self.get_player(player_id)

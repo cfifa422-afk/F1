@@ -92,26 +92,59 @@ PACK_CONFIGS = {
         "name": "Daily Pack",
         "emoji": "🗓️",
         "card_count": 1,
+        "cost": 0,
         "guaranteed": None,
-        "odds": {
-            "legendary": 0.01,
-            "epic": 0.07,
-            "rare": 0.27,
-            "common": 0.65,
-        },
+        "odds": {"legendary": 0.01, "epic": 0.07, "rare": 0.27, "common": 0.65},
     },
     "weekly": {
         "name": "Weekly Pack",
         "emoji": "🏆",
         "card_count": 1,
+        "cost": 0,
         "guaranteed": "rare",
-        "odds": {
-            "legendary": 0.06,
-            "epic": 0.18,
-            "rare": 0.36,
-            "common": 0.40,
-        },
+        "odds": {"legendary": 0.06, "epic": 0.18, "rare": 0.36, "common": 0.40},
     },
+    "bronze": {
+        "name": "Bronze Pack",
+        "emoji": "🥉",
+        "card_count": 3,
+        "cost": 500,
+        "guaranteed": None,
+        "odds": {"legendary": 0.01, "epic": 0.07, "rare": 0.30, "common": 0.62},
+    },
+    "silver": {
+        "name": "Silver Pack",
+        "emoji": "🥈",
+        "card_count": 3,
+        "cost": 1500,
+        "guaranteed": "rare",
+        "odds": {"legendary": 0.04, "epic": 0.14, "rare": 0.37, "common": 0.45},
+    },
+    "gold": {
+        "name": "Gold Pack",
+        "emoji": "🥇",
+        "card_count": 5,
+        "cost": 3500,
+        "guaranteed": "epic",
+        "odds": {"legendary": 0.10, "epic": 0.30, "rare": 0.45, "common": 0.15},
+    },
+    "platinum": {
+        "name": "Platinum Pack",
+        "emoji": "💎",
+        "card_count": 5,
+        "cost": 8000,
+        "guaranteed": "legendary",
+        "odds": {"legendary": 0.25, "epic": 0.40, "rare": 0.30, "common": 0.05},
+    },
+}
+
+# ==================== SELL VALUES ====================
+
+SELL_VALUES = {
+    "common": 75,
+    "rare": 200,
+    "epic": 600,
+    "legendary": 1500,
 }
 
 # ==================== WILD SPAWN ====================

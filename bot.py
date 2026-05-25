@@ -416,6 +416,111 @@ def build_spawn_embed(card: Dict) -> discord.Embed:
     return embed
 
 
+# ==================== DYNAMIC PACK OPENING ====================
+
+class PackOpeningView(discord.ui.View):
+    """Reveals cards one by one with animated step-by-step interaction."""
+
+    def __init__(self, player_id: str, cards: List[Dict], user: discord.User, pack_type: str):
+        super().__init__(timeout=120)
+        self.player_id = player_id
+        self.cards = cards
+        self.user = user
+        self.pack_type = pack_type
+        self.index = 0
+        for card in cards:
+            db.add_card_to_player(player_id, card, card["type"])
+        self._refresh_button()
+
+    def _refresh_button(self):
+        total = len(self.cards)
+        if self.index < total:
+            self.reveal_btn.label = f"✨  Reveal Card {self.index + 1} of {total}"
+            self.reveal_btn.style = discord.ButtonStyle.primary
+            self.reveal_btn.disabled = False
+        else:
+            self.reveal_btn.label = "📋  See Summary"
+            self.reveal_btn.style = discord.ButtonStyle.secondary
+            self.reveal_btn.disabled = False
+
+    def sealed_embed(self) -> discord.Embed:
+        config = card_module.PACK_CONFIGS[self.pack_type]
+        total = len(self.cards)
+        embed = discord.Embed(
+            title=f"{config['emoji']}  {config['name']}",
+            description=(
+                f"**{total} card{'s' if total > 1 else ''}** sealed inside.\n\n"
+                f"Click the button below to reveal your first card!"
+            ),
+            color=0x2C3E50,
+        )
+        embed.set_footer(text=f"Pack opened by {self.user.display_name}")
+        return embed
+
+    def card_embed(self, card: Dict, position: int) -> discord.Embed:
+        total = len(self.cards)
+        rarity = card["rarity"]
+        color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
+        emoji = card_module.RARITY_EMOJIS.get(rarity, "")
+        if card["type"] == "driver":
+            headline = f"👤  {card['name']} ({card['code']})"
+            stats = f"**Team:** {card['team']}  ·  **Skill:** {card['skill']}/10"
+        else:
+            headline = f"🏎️  {card['name']}"
+            stats = f"**Team:** {card['team']}  ·  **Top Speed:** {card['top_speed']} km/h"
+        if card.get("perks"):
+            perk_key = card["perks"][0]
+            perk = card_module.PERKS.get(perk_key, {})
+            stats += f"\n✨ **{perk.get('name', perk_key)}** — {perk.get('description', '')}"
+        remaining = total - position
+        embed = discord.Embed(
+            title=f"Card {position} of {total}",
+            description=f"## {headline}\n{emoji}  **{rarity.upper()}**\n{stats}",
+            color=color,
+        )
+        img = f1_images.get_card_image(card)
+        if img:
+            embed.set_image(url=img)
+        if remaining > 0:
+            embed.set_footer(text=f"{remaining} more card{'s' if remaining != 1 else ''} to go →")
+        else:
+            embed.set_footer(text="Last card! Click to see your full summary.")
+        return embed
+
+    def summary_embed(self) -> discord.Embed:
+        config = card_module.PACK_CONFIGS[self.pack_type]
+        lines = []
+        for card in self.cards:
+            emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+            if card["type"] == "driver":
+                lines.append(f"{emoji}  **{card['name']}** ({card['code']})  —  {card['rarity'].title()}")
+            else:
+                lines.append(f"{emoji}  **{card['name']}**  —  {card['rarity'].title()}")
+        embed = discord.Embed(
+            title=f"✅  {config['name']} Complete!",
+            description="\n".join(lines),
+            color=0x2ECC71,
+        )
+        embed.set_footer(text="All cards added to your collection!  Use /f1 equip to race.")
+        return embed
+
+    @discord.ui.button(label="✨  Reveal Card 1", style=discord.ButtonStyle.primary)
+    async def reveal_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This isn't your pack!", ephemeral=True)
+            return
+        total = len(self.cards)
+        if self.index >= total:
+            button.disabled = True
+            await interaction.response.edit_message(embed=self.summary_embed(), view=self)
+            self.stop()
+            return
+        card = self.cards[self.index]
+        self.index += 1
+        self._refresh_button()
+        await interaction.response.edit_message(embed=self.card_embed(card, self.index), view=self)
+
+
 def create_race_embed(race: RaceState, title: str) -> discord.Embed:
     embed = discord.Embed(title=f"🏎️ {title}", description=race.get_lap_info(), color=discord.Color.blue())
     p1_pos = "🥇 P1" if race.p1_position == 1 else "🥈 P2"
@@ -686,12 +791,9 @@ async def pack_daily(interaction: discord.Interaction):
     await interaction.response.defer()
 
     pack_cards = card_module.generate_pack("daily")
-    card = pack_cards[0]
-    db.add_card_to_player(player_id, card, card["type"])
     db.mark_daily_claimed(player_id)
-
-    embed = build_pack_embed(card, "daily", interaction.user, player_id)
-    await interaction.followup.send(embed=embed)
+    view = PackOpeningView(player_id, pack_cards, interaction.user, "daily")
+    await interaction.followup.send(embed=view.sealed_embed(), view=view)
 
 
 @pack_group.command(name="weekly", description="Open your weekly pack — guaranteed Rare+, resets every 7 days")
@@ -714,12 +816,9 @@ async def pack_weekly(interaction: discord.Interaction):
     await interaction.response.defer()
 
     pack_cards = card_module.generate_pack("weekly")
-    card = pack_cards[0]
-    db.add_card_to_player(player_id, card, card["type"])
     db.mark_weekly_claimed(player_id)
-
-    embed = build_pack_embed(card, "weekly", interaction.user, player_id)
-    await interaction.followup.send(embed=embed)
+    view = PackOpeningView(player_id, pack_cards, interaction.user, "weekly")
+    await interaction.followup.send(embed=view.sealed_embed(), view=view)
 
 
 # ==================== F1 SLASH COMMANDS ====================
@@ -883,6 +982,250 @@ async def f1_collection(interaction: discord.Interaction, filter: str = "all"):
     view = CollectionView(player_id, filtered, interaction.user.display_name)
     embed = view.build_embed()
     await interaction.response.send_message(embed=embed, view=view)
+
+
+# ==================== SHOP ====================
+
+BUYABLE_PACKS = ["bronze", "silver", "gold", "platinum"]
+
+PACK_BUTTON_STYLES = {
+    "bronze": discord.ButtonStyle.secondary,
+    "silver": discord.ButtonStyle.secondary,
+    "gold": discord.ButtonStyle.primary,
+    "platinum": discord.ButtonStyle.danger,
+}
+
+
+class ShopView(discord.ui.View):
+    """Interactive shop — one button per buyable pack tier."""
+
+    def __init__(self, player_id: str, user: discord.User):
+        super().__init__(timeout=60)
+        self.player_id = player_id
+        self.user = user
+        for pack_key in BUYABLE_PACKS:
+            cfg = card_module.PACK_CONFIGS[pack_key]
+            btn = discord.ui.Button(
+                label=f"{cfg['emoji']}  {cfg['name']}  —  {cfg['cost']:,} 💰",
+                style=PACK_BUTTON_STYLES[pack_key],
+                custom_id=pack_key,
+            )
+            btn.callback = self._make_callback(pack_key)
+            self.add_item(btn)
+
+    def _make_callback(self, pack_key: str):
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user.id:
+                await interaction.response.send_message("This isn't your shop menu!", ephemeral=True)
+                return
+            cfg = card_module.PACK_CONFIGS[pack_key]
+            cost = cfg["cost"]
+            balance = db.get_coins(self.player_id)
+            if balance < cost:
+                short = cost - balance
+                await interaction.response.send_message(
+                    f"❌ Not enough credits!  You have **{balance:,} 💰** but need **{cost:,} 💰**  (short by {short:,}).",
+                    ephemeral=True,
+                )
+                return
+            db.spend_coins(self.player_id, cost)
+            new_balance = db.get_coins(self.player_id)
+            pack_cards = card_module.generate_pack(pack_key)
+            view = PackOpeningView(self.player_id, pack_cards, interaction.user, pack_key)
+            await interaction.response.edit_message(
+                content=f"✅  Bought **{cfg['emoji']} {cfg['name']}** for **{cost:,} 💰**  ·  Balance: **{new_balance:,} 💰**",
+                embed=view.sealed_embed(),
+                view=view,
+            )
+        return callback
+
+
+@bot.tree.command(name="shop", description="Buy packs with your race credits")
+async def shop_command(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    give_starter_cards(player_id, interaction.user.name)
+
+    balance = db.get_coins(player_id)
+    embed = discord.Embed(
+        title="🏪  F1 Card Shop",
+        color=0xF39C12,
+    )
+    lines = []
+    for pack_key in BUYABLE_PACKS:
+        cfg = card_module.PACK_CONFIGS[pack_key]
+        cards_n = cfg["card_count"]
+        guar = cfg.get("guaranteed")
+        guar_str = f"  ·  Guaranteed {guar.title()}+" if guar else ""
+        odds = cfg["odds"]
+        rates = (
+            f"👑 {int(odds['legendary']*100)}%  "
+            f"💜 {int(odds['epic']*100)}%  "
+            f"💙 {int(odds['rare']*100)}%  "
+            f"⚪ {int(odds['common']*100)}%"
+        )
+        affordable = "✅" if balance >= cfg["cost"] else "❌"
+        lines.append(
+            f"{affordable} **{cfg['emoji']} {cfg['name']}** — **{cfg['cost']:,} 💰**\n"
+            f"　{cards_n} cards{guar_str}\n"
+            f"　{rates}"
+        )
+    embed.description = "\n\n".join(lines)
+    embed.add_field(name="💰 Your Balance", value=f"**{balance:,}** credits", inline=False)
+    embed.set_footer(text="Earn credits by racing!  Win = +100 💰  ·  Loss = +25 💰")
+
+    view = ShopView(player_id, interaction.user)
+    await interaction.response.send_message(embed=embed, view=view)
+
+
+# ==================== SELL CARDS ====================
+
+class SellConfirmView(discord.ui.View):
+    """Confirm/cancel selling a single card."""
+
+    def __init__(self, player_id: str, card: Dict, user: discord.User):
+        super().__init__(timeout=60)
+        self.player_id = player_id
+        self.card = card
+        self.user = user
+
+    @discord.ui.button(label="💰  Confirm Sale", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This isn't your menu!", ephemeral=True)
+            return
+        sell_price = card_module.SELL_VALUES.get(self.card["rarity"], 0)
+        removed = db.remove_card(self.player_id, self.card["id"])
+        if not removed:
+            await interaction.response.edit_message(content="❌ Card not found — it may have already been sold.", embed=None, view=None)
+            return
+        new_balance = db.add_coins(self.player_id, sell_price)
+        emoji = card_module.RARITY_EMOJIS.get(self.card["rarity"], "")
+        name = self.card["name"]
+        embed = discord.Embed(
+            title="💰  Card Sold!",
+            description=(
+                f"{emoji}  **{name}** sold for **+{sell_price:,} 💰**\n"
+                f"New balance: **{new_balance:,} 💰**"
+            ),
+            color=0x2ECC71,
+        )
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="✖  Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This isn't your menu!", ephemeral=True)
+            return
+        await interaction.response.edit_message(content="Sale cancelled.", embed=None, view=None)
+
+
+class SellSelectView(discord.ui.View):
+    """Select menu letting the player choose which card to sell."""
+
+    def __init__(self, player_id: str, all_cards: List[Dict], user: discord.User):
+        super().__init__(timeout=60)
+        self.player_id = player_id
+        self.user = user
+        self.card_map: Dict[str, Dict] = {}
+
+        RARITY_ORDER = {"legendary": 0, "epic": 1, "rare": 2, "common": 3}
+        sorted_cards = sorted(all_cards, key=lambda c: RARITY_ORDER.get(c["rarity"], 9))[:25]
+
+        options = []
+        for card in sorted_cards:
+            emoji_map = {"legendary": "👑", "epic": "💜", "rare": "💙", "common": "⚪"}
+            emoji = emoji_map.get(card["rarity"], "")
+            price = card_module.SELL_VALUES.get(card["rarity"], 0)
+            if card["type"] == "driver":
+                label = f"{card['name']} ({card['code']})"
+            else:
+                label = card["name"]
+            label = label[:95]
+            desc = f"{card['rarity'].title()}  ·  Sells for {price:,} 💰"
+            options.append(discord.SelectOption(label=label, value=card["id"], description=desc, emoji=emoji))
+            self.card_map[card["id"]] = card
+
+        self.select = discord.ui.Select(
+            placeholder="Choose a card to sell…",
+            options=options,
+            min_values=1,
+            max_values=1,
+        )
+        self.select.callback = self.on_select
+        self.add_item(self.select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This isn't your menu!", ephemeral=True)
+            return
+        card_id = self.select.values[0]
+        card = self.card_map.get(card_id)
+        if not card:
+            await interaction.response.edit_message(content="❌ Card not found.", embed=None, view=None)
+            return
+        sell_price = card_module.SELL_VALUES.get(card["rarity"], 0)
+        emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+        if card["type"] == "driver":
+            name = f"{card['name']} ({card['code']})"
+        else:
+            name = card["name"]
+        embed = discord.Embed(
+            title="🏷️  Confirm Sale",
+            description=(
+                f"{emoji}  **{name}**\n"
+                f"Rarity: **{card['rarity'].title()}**\n\n"
+                f"You will receive **{sell_price:,} 💰** for this card.\n"
+                f"*This cannot be undone!*"
+            ),
+            color=card_module.RARITY_COLORS.get(card["rarity"], 0x95A5A6),
+        )
+        img = f1_images.get_card_image(card)
+        if img:
+            embed.set_image(url=img)
+        confirm_view = SellConfirmView(self.player_id, card, self.user)
+        await interaction.response.edit_message(embed=embed, view=confirm_view)
+
+
+@f1_group.command(name="sell", description="Sell a card from your collection for race credits")
+async def f1_sell(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    give_starter_cards(player_id, interaction.user.name)
+
+    all_cards = db.get_all_cards_sorted(player_id)
+    if not all_cards:
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="❌ No Cards to Sell",
+                description="You have no cards yet! Open packs with `/pack daily` or `/pack weekly`.",
+                color=0xE74C3C,
+            ),
+            ephemeral=True,
+        )
+        return
+
+    balance = db.get_coins(player_id)
+    SELL_PREVIEW = {"common": 75, "rare": 200, "epic": 600, "legendary": 1500}
+    embed = discord.Embed(
+        title="💸  Sell Cards",
+        description=(
+            f"**Your balance:** {balance:,} 💰\n\n"
+            f"**Sell prices:**\n"
+            f"⚪ Common — **{SELL_PREVIEW['common']:,} 💰**\n"
+            f"💙 Rare — **{SELL_PREVIEW['rare']:,} 💰**\n"
+            f"💜 Epic — **{SELL_PREVIEW['epic']:,} 💰**\n"
+            f"👑 Legendary — **{SELL_PREVIEW['legendary']:,} 💰**\n\n"
+            f"Select a card from the dropdown to sell it."
+        ),
+        color=0xF39C12,
+    )
+    embed.set_footer(text=f"You have {len(all_cards)} card{'s' if len(all_cards) != 1 else ''} total.")
+
+    view = SellSelectView(player_id, all_cards, interaction.user)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ==================== REGISTER COMMAND GROUPS ====================
