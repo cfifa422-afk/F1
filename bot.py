@@ -521,23 +521,128 @@ class PackOpeningView(discord.ui.View):
         await interaction.response.edit_message(embed=self.card_embed(card, self.index), view=self)
 
 
-def create_race_embed(race: RaceState, title: str) -> discord.Embed:
-    embed = discord.Embed(title=f"🏎️ {title}", description=race.get_lap_info(), color=discord.Color.blue())
-    p1_pos = "🥇 P1" if race.p1_position == 1 else "🥈 P2"
-    p2_pos = "🥇 P1" if race.p2_position == 1 else "🥈 P2"
-    embed.add_field(name="Positions", value=f"{p1_pos} | Gap: {abs(race.gap):.1f}s | {p2_pos}", inline=False)
-    embed.add_field(
-        name="Player 1",
-        value=f"{race.p1_driver.name} ({race.p1_driver.code}) in {race.p1_car.name}\nFuel: {race.p1_fuel:.0f}% | Tires: {race.p1_tire_type.upper()} ({race.p1_tire_wear:.0f}%)",
-        inline=True,
+# ==================== RACE VISUAL HELPERS ====================
+
+RACE_GIFS = [
+    "https://media.giphy.com/media/3ohzdIuqJoo8QdKlnW/giphy.gif",
+    "https://media.giphy.com/media/26gJAn0QqFWbqQUMw/giphy.gif",
+    "https://media.giphy.com/media/l0MYyoYKBIRtjXJEQ/giphy.gif",
+    "https://media.giphy.com/media/xT1Ra5h24Eliux3UVq/giphy.gif",
+]
+
+CHOICE_LABELS = {
+    "accelerate": ("🚀", "Push Hard"),
+    "same_speed":  ("➡️", "Maintain"),
+    "slow_down":   ("🛑", "Lift Off"),
+    "pit_stop":    ("⛽", "Pit Stop"),
+}
+
+def _bar(value: float, max_val: float = 100.0, length: int = 8) -> str:
+    ratio = max(0.0, min(1.0, value / max_val))
+    filled = round(ratio * length)
+    return "█" * filled + "░" * (length - filled)
+
+def _fuel_str(fuel: float) -> str:
+    icon = "🟢" if fuel > 50 else ("🟡" if fuel > 25 else "🔴")
+    return f"{icon} `{_bar(fuel)}` **{fuel:.0f}%**"
+
+def _tire_str(wear: float, tire_type: str) -> str:
+    health = 100.0 - wear
+    icon = "🟢" if health > 60 else ("🟡" if health > 30 else "🔴")
+    t = {"soft": "Soft", "medium": "Med", "hard": "Hard", "wet": "Wet"}.get(tire_type, tire_type.title())
+    return f"{icon} `{_bar(health)}` **{t}** ({health:.0f}%)"
+
+def build_live_embed(
+    race: RaceState,
+    p1_user: discord.Member,
+    p2_user: discord.Member,
+    gif_url: str,
+    p1_locked: bool = False,
+    p2_locked: bool = False,
+    last_event: Optional[str] = None,
+) -> discord.Embed:
+    weather_icon = "🌧️" if race.weather == "rain" else "☀️"
+    p1_pos_icon = "🥇" if race.p1_position == 1 else "🥈"
+    p2_pos_icon = "🥇" if race.p2_position == 1 else "🥈"
+
+    title = f"🏁  F1 Race  ·  Lap {race.lap}/{race.total_laps}  ·  Turn {race.turn + 1}/{race.max_turns}"
+    desc_parts = []
+    if last_event:
+        desc_parts.append(f"📡 **{last_event}**")
+    if race.weather == "rain":
+        desc_parts.append("🌧️ **WET CONDITIONS** — Pit for wets!")
+
+    embed = discord.Embed(
+        title=title,
+        description="\n".join(desc_parts) if desc_parts else None,
+        color=0xE74C3C,
     )
-    embed.add_field(
-        name="Player 2",
-        value=f"{race.p2_driver.name} ({race.p2_driver.code}) in {race.p2_car.name}\nFuel: {race.p2_fuel:.0f}% | Tires: {race.p2_tire_type.upper()} ({race.p2_tire_wear:.0f}%)",
-        inline=True,
+    embed.set_image(url=gif_url)
+
+    gap = race.gap
+    if abs(gap) < 0.3:
+        gap_str = "**⚡ SIDE BY SIDE!**"
+    elif gap < 0:
+        gap_str = f"🏎️ **{p1_user.display_name}** leads by **{abs(gap):.2f}s**"
+    else:
+        gap_str = f"🏎️ **{p2_user.display_name}** leads by **{abs(gap):.2f}s**"
+
+    embed.add_field(name=f"{weather_icon}  Race Gap", value=gap_str, inline=False)
+
+    p1_val = (
+        f"👤 **{race.p1_driver.name}** ({race.p1_driver.code})  ·  🏎️ **{race.p1_car.name}**\n"
+        f"⛽ {_fuel_str(race.p1_fuel)}\n"
+        f"🔧 {_tire_str(race.p1_tire_wear, race.p1_tire_type)}"
     )
-    if race.events_log:
-        embed.add_field(name="📡 Events", value="\n".join(race.events_log[-3:]), inline=False)
+    embed.add_field(name=f"{p1_pos_icon}  {p1_user.display_name}", value=p1_val, inline=True)
+
+    p2_val = (
+        f"👤 **{race.p2_driver.name}** ({race.p2_driver.code})  ·  🏎️ **{race.p2_car.name}**\n"
+        f"⛽ {_fuel_str(race.p2_fuel)}\n"
+        f"🔧 {_tire_str(race.p2_tire_wear, race.p2_tire_type)}"
+    )
+    embed.add_field(name=f"{p2_pos_icon}  {p2_user.display_name}", value=p2_val, inline=True)
+
+    p1_status = f"✅ **{p1_user.display_name}** locked in" if p1_locked else f"⏳ Waiting for **{p1_user.display_name}**…"
+    p2_status = f"✅ **{p2_user.display_name}** locked in" if p2_locked else f"⏳ Waiting for **{p2_user.display_name}**…"
+    embed.add_field(name="​", value=f"{p1_status}\n{p2_status}", inline=False)
+    embed.set_footer(text="Both drivers choose · Auto-resolves in 45s if idle")
+    return embed
+
+
+def build_challenge_embed(
+    challenger: discord.Member, opponent: discord.Member,
+    p1_car: Car, p1_driver: Driver,
+    p2_car: Car, p2_driver: Driver,
+    gif_url: str,
+    synergy1: Optional[Dict], synergy2: Optional[Dict],
+) -> discord.Embed:
+    d1_e = card_module.RARITY_EMOJIS.get(p1_driver.rarity, "")
+    c1_e = card_module.RARITY_EMOJIS.get(p1_car.rarity, "")
+    d2_e = card_module.RARITY_EMOJIS.get(p2_driver.rarity, "")
+    c2_e = card_module.RARITY_EMOJIS.get(p2_car.rarity, "")
+
+    embed = discord.Embed(
+        title="⚡  Race Challenge!",
+        description=(
+            f"{challenger.mention} is challenging {opponent.mention} to a race!\n"
+            f"*{opponent.display_name} has 60 seconds to accept or decline.*"
+        ),
+        color=0x3498DB,
+    )
+    embed.set_image(url=gif_url)
+
+    p1_val = f"{d1_e} **{p1_driver.name}** ({p1_driver.code})\n{c1_e} **{p1_car.name}** · {p1_car.top_speed} km/h"
+    if synergy1:
+        p1_val += f"\n✨ *{synergy1['name']}*"
+    embed.add_field(name=f"🏎️  {challenger.display_name}", value=p1_val, inline=True)
+
+    p2_val = f"{d2_e} **{p2_driver.name}** ({p2_driver.code})\n{c2_e} **{p2_car.name}** · {p2_car.top_speed} km/h"
+    if synergy2:
+        p2_val += f"\n✨ *{synergy2['name']}*"
+    embed.add_field(name=f"🏎️  {opponent.display_name}", value=p2_val, inline=True)
+
+    embed.set_footer(text="3 Laps · 12 Turns · Manage fuel, tyres & strategy to win")
     return embed
 
 
@@ -1256,144 +1361,307 @@ bot.tree.add_command(f1_group)
 bot.tree.add_command(config_group)
 
 
-# ==================== PREFIX RACE COMMANDS ====================
+# ==================== LIVE RACE VIEW ====================
 
-@bot.command(name="race")
-async def start_race(ctx, opponent: discord.Member):
-    """Start a 1v1 race: !race @opponent"""
-    player_id = str(ctx.author.id)
+class LiveRaceView(discord.ui.View):
+    """Channel-based race — both players choose in one live message."""
+
+    def __init__(self, race: RaceState, p1_user: discord.Member, p2_user: discord.Member, gif_url: str):
+        super().__init__(timeout=None)
+        self.race = race
+        self.p1_user = p1_user
+        self.p2_user = p2_user
+        self.gif_url = gif_url
+        self.p1_choice: Optional[str] = None
+        self.p2_choice: Optional[str] = None
+        self.lock = asyncio.Lock()
+        self.turn_ready = asyncio.Event()
+        self.message: Optional[discord.Message] = None
+
+    def _side(self, user: discord.Member) -> Optional[str]:
+        if user.id == self.p1_user.id:
+            return "p1"
+        if user.id == self.p2_user.id:
+            return "p2"
+        return None
+
+    async def _handle(self, interaction: discord.Interaction, choice: str):
+        side = self._side(interaction.user)
+        if not side:
+            await interaction.response.send_message("You're not in this race!", ephemeral=True)
+            return
+
+        async with self.lock:
+            already = self.p1_choice if side == "p1" else self.p2_choice
+            if already:
+                await interaction.response.send_message("You've already locked in your choice!", ephemeral=True)
+                return
+
+            if side == "p1":
+                self.p1_choice = choice
+            else:
+                self.p2_choice = choice
+
+            emoji, label = CHOICE_LABELS[choice]
+            await interaction.response.send_message(
+                f"{emoji}  **{label}** locked in!  Waiting for your opponent…",
+                ephemeral=True,
+            )
+
+            if self.message:
+                try:
+                    embed = build_live_embed(
+                        self.race, self.p1_user, self.p2_user, self.gif_url,
+                        p1_locked=bool(self.p1_choice),
+                        p2_locked=bool(self.p2_choice),
+                    )
+                    await self.message.edit(embed=embed, view=self)
+                except Exception:
+                    pass
+
+            if self.p1_choice and self.p2_choice:
+                self.turn_ready.set()
+
+    @discord.ui.button(label="🚀  Push Hard", style=discord.ButtonStyle.success, row=0)
+    async def btn_accelerate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "accelerate")
+
+    @discord.ui.button(label="➡️  Maintain", style=discord.ButtonStyle.secondary, row=0)
+    async def btn_same(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "same_speed")
+
+    @discord.ui.button(label="🛑  Lift Off", style=discord.ButtonStyle.danger, row=0)
+    async def btn_slow(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "slow_down")
+
+    @discord.ui.button(label="⛽  Pit Stop", style=discord.ButtonStyle.primary, row=0)
+    async def btn_pit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "pit_stop")
+
+
+class ChallengeView(discord.ui.View):
+    """Accept/decline embed before the race starts."""
+
+    def __init__(
+        self,
+        challenger: discord.Member,
+        opponent: discord.Member,
+        race: RaceState,
+        gif_url: str,
+    ):
+        super().__init__(timeout=60)
+        self.challenger = challenger
+        self.opponent = opponent
+        self.race = race
+        self.gif_url = gif_url
+
+    @discord.ui.button(label="✅  Accept Challenge", style=discord.ButtonStyle.success)
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.opponent.id:
+            await interaction.response.send_message("This challenge isn't for you!", ephemeral=True)
+            return
+        self.stop()
+
+        view = LiveRaceView(self.race, self.challenger, self.opponent, self.gif_url)
+        embed = build_live_embed(self.race, self.challenger, self.opponent, self.gif_url)
+        await interaction.response.edit_message(embed=embed, view=view)
+        msg = await interaction.original_response()
+        view.message = msg
+        asyncio.create_task(run_live_race(self.race, self.challenger, self.opponent, view, interaction.channel))
+
+    @discord.ui.button(label="❌  Decline", style=discord.ButtonStyle.danger)
+    async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.opponent.id:
+            await interaction.response.send_message("This challenge isn't for you!", ephemeral=True)
+            return
+        self.stop()
+        active_race_pairs.pop(str(self.challenger.id), None)
+        active_race_pairs.pop(str(self.opponent.id), None)
+        embed = discord.Embed(
+            title="❌  Challenge Declined",
+            description=f"{self.opponent.display_name} declined the race.",
+            color=0xE74C3C,
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+    async def on_timeout(self):
+        active_race_pairs.pop(str(self.challenger.id), None)
+        active_race_pairs.pop(str(self.opponent.id), None)
+
+
+async def run_live_race(
+    race: RaceState,
+    p1_user: discord.Member,
+    p2_user: discord.Member,
+    view: LiveRaceView,
+    channel,
+):
+    """Background race loop — waits for both choices each turn, then processes."""
+    TURN_TIMEOUT = 45
+
+    try:
+        while race.turn < race.max_turns and race.lap <= race.total_laps:
+            view.turn_ready.clear()
+
+            try:
+                await asyncio.wait_for(view.turn_ready.wait(), timeout=TURN_TIMEOUT)
+            except asyncio.TimeoutError:
+                pass
+
+            async with view.lock:
+                p1_choice = view.p1_choice or "same_speed"
+                p2_choice = view.p2_choice or "same_speed"
+                view.p1_choice = None
+                view.p2_choice = None
+                view.turn_ready.clear()
+
+            result = race_engine.process_turn(race, p1_choice, p2_choice)
+            event = result.get("event")
+
+            if result.get("dnf") or result.get("race_finished") or race.lap > race.total_laps:
+                await finish_live_race(race, p1_user, p2_user, view, result, channel)
+                return
+
+            if view.message:
+                try:
+                    embed = build_live_embed(
+                        race, p1_user, p2_user, view.gif_url, last_event=event
+                    )
+                    await view.message.edit(embed=embed, view=view)
+                except Exception:
+                    pass
+
+        await finish_live_race(race, p1_user, p2_user, view, {"race_finished": True}, channel)
+    except Exception as e:
+        print(f"Race loop error: {e}")
+        active_race_pairs.pop(str(race.player1_id), None)
+        active_race_pairs.pop(str(race.player2_id), None)
+        view.stop()
+
+
+async def finish_live_race(
+    race: RaceState,
+    p1_user: discord.Member,
+    p2_user: discord.Member,
+    view: LiveRaceView,
+    result: Dict,
+    channel,
+):
+    """Handle race end — award coins, post results embed in channel."""
+    active_race_pairs.pop(str(race.player1_id), None)
+    active_race_pairs.pop(str(race.player2_id), None)
+    view.stop()
+
+    if result.get("dnf"):
+        dnf_side = result["dnf"]
+        winner_id = race.player2_id if dnf_side == "p1" else race.player1_id
+        loser_id  = race.player1_id if dnf_side == "p1" else race.player2_id
+        winner_user = p2_user if dnf_side == "p1" else p1_user
+        loser_user  = p1_user if dnf_side == "p1" else p2_user
+        reason = result.get("reason", "unknown").replace("_", " ").title()
+
+        winner_coins = db.add_coins(winner_id, 100)
+        loser_coins  = db.add_coins(loser_id, 10)
+        db.update_player_stats(winner_id, {"status": "win"})
+        db.update_player_stats(loser_id,  {"status": "dnf"})
+
+        embed = discord.Embed(
+            title="⚠️  Race Ended — DNF!",
+            description=f"{loser_user.mention} retired from the race — **{reason}**",
+            color=0xE74C3C,
+        )
+        embed.add_field(name="🏆 Winner", value=winner_user.mention, inline=True)
+        embed.add_field(name="💰 Rewards",
+            value=f"🥇 {winner_user.mention}: **+100 coins** ({winner_coins:,} total)\n"
+                  f"🔧 {loser_user.mention}: **+10 coins** ({loser_coins:,} total)",
+            inline=False,
+        )
+    else:
+        winner_pos_1 = race.p1_position == 1
+        winner_id   = race.player1_id if winner_pos_1 else race.player2_id
+        loser_id    = race.player2_id if winner_pos_1 else race.player1_id
+        winner_user = p1_user if winner_pos_1 else p2_user
+        loser_user  = p2_user if winner_pos_1 else p1_user
+
+        winner_coins = db.add_coins(winner_id, 100)
+        loser_coins  = db.add_coins(loser_id, 25)
+        db.update_player_stats(winner_id, {"status": "win"})
+        db.update_player_stats(loser_id,  {"status": "loss"})
+
+        gap_text = f"{abs(race.gap):.3f}s"
+        embed = discord.Embed(
+            title="🏁  Race Complete!",
+            description=f"## 🥇 {winner_user.mention} wins!",
+            color=0xFFD700,
+        )
+        embed.add_field(name="🥈 Runner-up", value=loser_user.mention, inline=True)
+        embed.add_field(name="⏱️ Gap", value=gap_text, inline=True)
+        embed.add_field(
+            name="🔧 Pit Stops",
+            value=f"{p1_user.display_name}: {race.p1_pit_stops}  ·  {p2_user.display_name}: {race.p2_pit_stops}",
+            inline=False,
+        )
+        embed.add_field(
+            name="💰 Rewards",
+            value=(
+                f"🥇 {winner_user.mention}: **+100 coins** ({winner_coins:,} total)\n"
+                f"🥈 {loser_user.mention}: **+25 coins** ({loser_coins:,} total)"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="Earn more cards at /pack daily  ·  Upgrade with /shop")
+
+    try:
+        if view.message:
+            await view.message.edit(embed=embed, view=None)
+        elif channel:
+            await channel.send(embed=embed)
+    except Exception:
+        if channel:
+            try:
+                await channel.send(embed=embed)
+            except Exception:
+                pass
+
+
+@bot.tree.command(name="race", description="Challenge another player to an F1 race!")
+@app_commands.describe(opponent="The player you want to race against")
+async def race_slash_command(interaction: discord.Interaction, opponent: discord.Member):
+    player_id  = str(interaction.user.id)
     opponent_id = str(opponent.id)
 
-    if player_id == opponent_id:
-        await ctx.send("❌ You can't race yourself!")
+    if interaction.user.id == opponent.id:
+        await interaction.response.send_message("❌ You can't race yourself!", ephemeral=True)
         return
-
+    if opponent.bot:
+        await interaction.response.send_message("❌ You can't race a bot!", ephemeral=True)
+        return
     if player_id in active_race_pairs or opponent_id in active_race_pairs:
-        await ctx.send("❌ One of you is already in a race!")
+        await interaction.response.send_message("❌ One of you is already in a race!", ephemeral=True)
         return
 
-    db.ensure_player(player_id, ctx.author.name)
+    db.ensure_player(player_id, interaction.user.name)
     db.ensure_player(opponent_id, opponent.name)
-    give_starter_cards(player_id, ctx.author.name)
+    give_starter_cards(player_id, interaction.user.name)
     give_starter_cards(opponent_id, opponent.name)
 
     p1_car, p1_driver = get_player_race_cards(player_id)
     p2_car, p2_driver = get_player_race_cards(opponent_id)
-
     synergy1 = card_module.check_synergy(p1_driver.code, p1_car.team)
     synergy2 = card_module.check_synergy(p2_driver.code, p2_car.team)
 
     race, race_id = race_engine.create_race(player_id, opponent_id, p1_car, p1_driver, p2_car, p2_driver)
-    active_race_pairs[player_id] = race_id
+    active_race_pairs[player_id]  = race_id
     active_race_pairs[opponent_id] = race_id
 
-    d1_emoji = card_module.RARITY_EMOJIS.get(p1_driver.rarity, "")
-    c1_emoji = card_module.RARITY_EMOJIS.get(p1_car.rarity, "")
-    d2_emoji = card_module.RARITY_EMOJIS.get(p2_driver.rarity, "")
-    c2_emoji = card_module.RARITY_EMOJIS.get(p2_car.rarity, "")
-
-    embed = discord.Embed(title="🏁 Race Starting!", description=f"{ctx.author.mention} vs {opponent.mention}", color=discord.Color.green())
-    p1_val = f"{d1_emoji} {p1_driver.name} ({p1_driver.code})\n{c1_emoji} {p1_car.name} — {p1_car.top_speed}km/h"
-    p2_val = f"{d2_emoji} {p2_driver.name} ({p2_driver.code})\n{c2_emoji} {p2_car.name} — {p2_car.top_speed}km/h"
-    if synergy1:
-        p1_val += f"\n✨ *{synergy1['name']}* bonus!"
-    if synergy2:
-        p2_val += f"\n✨ *{synergy2['name']}* bonus!"
-    embed.add_field(name=f"Player 1 — {ctx.author.display_name}", value=p1_val, inline=True)
-    embed.add_field(name=f"Player 2 — {opponent.display_name}", value=p2_val, inline=True)
-    embed.add_field(name="📬 Status", value="Check your DMs for race controls!", inline=False)
-    await ctx.send(embed=embed)
-
-    asyncio.create_task(run_race(race, ctx.author, opponent, race_id))
-
-
-async def run_race(race: RaceState, p1_user: discord.Member, p2_user: discord.Member, race_id: str):
-    """Main race loop."""
-    try:
-        while race.lap <= race.total_laps and race.turn < race.max_turns:
-            race.p1_choice = None
-            race.p2_choice = None
-
-            embed = create_race_embed(race, f"Turn {race.turn + 1}")
-            p1_view = RaceChoiceView(race, "p1")
-            p2_view = RaceChoiceView(race, "p2")
-
-            try:
-                p1_dm = await p1_user.create_dm()
-                p2_dm = await p2_user.create_dm()
-                await p1_dm.send(embed=embed, view=p1_view)
-                await p2_dm.send(embed=embed, view=p2_view)
-            except discord.Forbidden:
-                pass
-
-            await asyncio.sleep(30)
-
-            p1_choice = race.p1_choice or "same_speed"
-            p2_choice = race.p2_choice or "same_speed"
-
-            result = race_engine.process_turn(race, p1_choice, p2_choice)
-
-            if result.get("race_finished") or result.get("dnf"):
-                await end_race(race, p1_user, p2_user, race_id, result)
-                return
-
-        await end_race(race, p1_user, p2_user, race_id, {"race_finished": True})
-    except Exception as e:
-        print(f"Race error: {e}")
-        active_race_pairs.pop(race.player1_id, None)
-        active_race_pairs.pop(race.player2_id, None)
-
-
-async def end_race(race: RaceState, p1_user: discord.Member, p2_user: discord.Member, race_id: str, result: Dict):
-    """Handle race end, award coins, update stats."""
-    active_race_pairs.pop(race.player1_id, None)
-    active_race_pairs.pop(race.player2_id, None)
-
-    if result.get("dnf"):
-        dnf_side = result["dnf"]
-        dnf_id = race.player1_id if dnf_side == "p1" else race.player2_id
-        winner_id = race.player2_id if dnf_side == "p1" else race.player1_id
-        winner_user = p2_user if dnf_side == "p1" else p1_user
-        reason = result.get("reason", "unknown").replace("_", " ").title()
-
-        embed = discord.Embed(title="❌ Race DNF!", color=discord.Color.red())
-        dnf_user = p1_user if dnf_side == "p1" else p2_user
-        embed.add_field(name="DNF", value=f"{dnf_user.mention} — {reason}", inline=False)
-        embed.add_field(name="🏆 Winner", value=winner_user.mention, inline=False)
-
-        winner_coins = db.add_coins(winner_id, 100)
-        loser_coins = db.add_coins(dnf_id, 10)
-        embed.add_field(name="💰 Rewards", value=f"🏆 Winner: **+100** credits ({winner_coins} total)\nDNF: **+10** credits ({loser_coins} total)", inline=False)
-
-        db.update_player_stats(winner_id, {"status": "win"})
-        db.update_player_stats(dnf_id, {"status": "dnf"})
-    else:
-        winner_pos_1 = race.p1_position == 1
-        winner_id = race.player1_id if winner_pos_1 else race.player2_id
-        loser_id = race.player2_id if winner_pos_1 else race.player1_id
-        winner_user = p1_user if winner_pos_1 else p2_user
-        loser_user = p2_user if winner_pos_1 else p1_user
-
-        embed = discord.Embed(title="🏁 Race Finished!", color=discord.Color.gold())
-        embed.add_field(name="🥇 Winner", value=winner_user.mention, inline=True)
-        embed.add_field(name="🥈 Runner-up", value=loser_user.mention, inline=True)
-        embed.add_field(name="Gap", value=f"{abs(race.gap):.2f}s", inline=False)
-        embed.add_field(name="Pit Stops", value=f"P1: {race.p1_pit_stops} | P2: {race.p2_pit_stops}", inline=False)
-
-        winner_coins = db.add_coins(winner_id, 100)
-        loser_coins = db.add_coins(loser_id, 25)
-        embed.add_field(name="💰 Race Credits", value=f"🏆 Winner: **+100** credits ({winner_coins} total)\n🥈 Runner-up: **+25** credits ({loser_coins} total)", inline=False)
-
-        db.update_player_stats(winner_id, {"status": "win"})
-        db.update_player_stats(loser_id, {"status": "loss"})
-
-    try:
-        p1_dm = await p1_user.create_dm()
-        p2_dm = await p2_user.create_dm()
-        await p1_dm.send(embed=embed)
-        await p2_dm.send(embed=embed)
-    except discord.Forbidden:
-        pass
+    gif_url = random.choice(RACE_GIFS)
+    challenge_embed = build_challenge_embed(
+        interaction.user, opponent,
+        p1_car, p1_driver, p2_car, p2_driver,
+        gif_url, synergy1, synergy2,
+    )
+    challenge_view = ChallengeView(interaction.user, opponent, race, gif_url)
+    await interaction.response.send_message(embed=challenge_embed, view=challenge_view)
 
 
 @bot.command(name="deck")
@@ -1435,49 +1703,6 @@ async def show_deck(ctx):
 
 
 # ==================== UI COMPONENTS ====================
-
-class RaceChoiceView(discord.ui.View):
-    def __init__(self, race: RaceState, player: str):
-        super().__init__(timeout=30)
-        self.race = race
-        self.player = player
-
-    @discord.ui.button(label="🛑 Slow Down", style=discord.ButtonStyle.danger)
-    async def slow_down(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.player == "p1":
-            self.race.p1_choice = "slow_down"
-        else:
-            self.race.p2_choice = "slow_down"
-        await interaction.response.send_message("✅ Slowing down...", ephemeral=True)
-        self.stop()
-
-    @discord.ui.button(label="➡️ Same Speed", style=discord.ButtonStyle.secondary)
-    async def same_speed(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.player == "p1":
-            self.race.p1_choice = "same_speed"
-        else:
-            self.race.p2_choice = "same_speed"
-        await interaction.response.send_message("✅ Maintaining pace...", ephemeral=True)
-        self.stop()
-
-    @discord.ui.button(label="🚀 Accelerate", style=discord.ButtonStyle.success)
-    async def accelerate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.player == "p1":
-            self.race.p1_choice = "accelerate"
-        else:
-            self.race.p2_choice = "accelerate"
-        await interaction.response.send_message("✅ Flooring it!", ephemeral=True)
-        self.stop()
-
-    @discord.ui.button(label="⛽ Pit Stop", style=discord.ButtonStyle.primary)
-    async def pit_stop(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.player == "p1":
-            self.race.p1_choice = "pit_stop"
-        else:
-            self.race.p2_choice = "pit_stop"
-        await interaction.response.send_message("✅ Pitting in!", ephemeral=True)
-        self.stop()
-
 
 class EquipTypeView(discord.ui.View):
     def __init__(self, player_id: str):
