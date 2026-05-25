@@ -382,15 +382,21 @@ def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: 
     return embed
 
 
-def build_spawn_embed(card: Dict) -> discord.Embed:
-    """Minimal spawn embed — just the photo, rarity color, footer hint. No name shown."""
-    color = card_module.RARITY_COLORS.get(card["rarity"], 0x95A5A6)
-    embed = discord.Embed(color=color)
+def build_spawn_content(card: Dict) -> str:
+    """Build plain-text spawn message content — image URL previews large, no embed box."""
+    rarity_emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+    if card["type"] == "driver":
+        name_line = f"**Name:** {card['name']} ({card.get('code', '')})"
+    else:
+        name_line = f"**Name:** {card['name']}"
     img = f1_images.get_card_image(card)
+    lines = [
+        f"🏎️  **A wild F1 card appeared! Catch it!**",
+        f"{rarity_emoji} {card['rarity'].upper()}  ·  {name_line}",
+    ]
     if img:
-        embed.set_image(url=img)
-    embed.set_footer(text="A wild F1 card appeared — click Catch me! and type its name to claim it.")
-    return embed
+        lines.append(img)
+    return "\n".join(lines)
 
 
 def create_race_embed(race: RaceState, title: str) -> discord.Embed:
@@ -489,9 +495,10 @@ class SpawnView(discord.ui.View):
     """Catch button for wild spawns — opens a name-entry modal."""
 
     def __init__(self, card: Dict):
-        super().__init__(timeout=1800)
+        super().__init__(timeout=300)
         self.card = card
         self.caught = False
+        self.message: Optional[discord.Message] = None
 
     @discord.ui.button(label="Catch me!", style=discord.ButtonStyle.success)
     async def catch_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -505,6 +512,17 @@ class SpawnView(discord.ui.View):
     async def on_timeout(self):
         for child in self.children:
             child.disabled = True
+        if self.message:
+            try:
+                rarity_emoji = card_module.RARITY_EMOJIS.get(self.card["rarity"], "")
+                expired_text = (
+                    f"~~🏎️  **A wild F1 card appeared! Catch it!**~~\n"
+                    f"{rarity_emoji} {self.card['rarity'].upper()}  ·  **{self.card['name']}**\n"
+                    f"⏰ *This card fled — nobody caught it in time!*"
+                )
+                await self.message.edit(content=expired_text, view=self)
+            except Exception:
+                pass
 
 
 @tasks.loop(minutes=30)
@@ -520,9 +538,10 @@ async def spawn_wild_card():
             continue
         try:
             card = card_module.generate_spawn_card()
-            embed = build_spawn_embed(card)
+            content = build_spawn_content(card)
             view = SpawnView(card)
-            await channel.send(embed=embed, view=view)
+            msg = await channel.send(content=content, view=view)
+            view.message = msg
             print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name})")
         except Exception as e:
             print(f"⚠️ Failed to spawn card in guild {guild.id}: {e}")
