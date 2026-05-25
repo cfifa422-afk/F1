@@ -150,6 +150,17 @@
             "rarity": "common",
             "perks": [],
             "obtained_at": "2026-05-25T07:50:49.791254"
+          },
+          {
+            "id": "car_Alpine_77239",
+            "type": "car",
+            "name": "Alpine A523",
+            "team": "Alpine",
+            "top_speed": 368,
+            "handling": 7.6,
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-25T09:02:52.095251"
           }
         ]
       },
