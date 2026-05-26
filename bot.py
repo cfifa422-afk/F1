@@ -645,6 +645,113 @@ def build_live_embed(
     return embed
 
 
+def build_auto_embed(
+    race: RaceState,
+    p1_user: discord.Member,
+    p2_user: discord.Member,
+    gif_url: str,
+    commentary_log: List[str],
+    next_scenario_turn: Optional[int] = None,
+) -> discord.Embed:
+    """Embed shown during auto-simulation turns — pure commentary, no buttons."""
+    weather_icon = "🌧️" if race.weather == "rain" else "☀️"
+    p1_pos_icon = "🥇" if race.p1_position == 1 else "🥈"
+    p2_pos_icon = "🥇" if race.p2_position == 1 else "🥈"
+
+    title = f"🏁  F1 Race  ·  Lap {race.lap}/{race.total_laps}  ·  Turn {race.turn}/{race.max_turns}"
+    desc = commentary_engine.format_commentary(commentary_log[-5:]) if commentary_log else "*Race underway…*"
+    if race.weather == "rain":
+        desc = "🌧️ *WET CONDITIONS!*\n" + desc
+
+    embed = discord.Embed(title=title, description=desc, color=0xE74C3C)
+    embed.set_image(url=gif_url)
+
+    gap = race.gap
+    if abs(gap) < 0.3:
+        gap_str = "**⚡ SIDE BY SIDE — WHEEL TO WHEEL!**"
+    elif gap < 0:
+        gap_str = f"🏎️ **{p1_user.display_name}** leads by **{abs(gap):.2f}s**"
+    else:
+        gap_str = f"🏎️ **{p2_user.display_name}** leads by **{abs(gap):.2f}s**"
+
+    embed.add_field(name=f"{weather_icon}  Race Gap", value=gap_str, inline=False)
+
+    p1_val = (
+        f"👤 **{race.p1_driver.name}** ({race.p1_driver.code})  ·  🏎️ **{race.p1_car.name}**\n"
+        f"⛽ {_fuel_str(race.p1_fuel)}\n"
+        f"🔧 {_tire_str(race.p1_tire_wear, race.p1_tire_type)}"
+    )
+    embed.add_field(name=f"{p1_pos_icon}  {p1_user.display_name}", value=p1_val, inline=True)
+
+    p2_val = (
+        f"👤 **{race.p2_driver.name}** ({race.p2_driver.code})  ·  🏎️ **{race.p2_car.name}**\n"
+        f"⛽ {_fuel_str(race.p2_fuel)}\n"
+        f"🔧 {_tire_str(race.p2_tire_wear, race.p2_tire_type)}"
+    )
+    embed.add_field(name=f"{p2_pos_icon}  {p2_user.display_name}", value=p2_val, inline=True)
+
+    if next_scenario_turn and race.turn < next_scenario_turn:
+        turns_away = next_scenario_turn - race.turn
+        embed.set_footer(text=f"⚡ Auto-simulation  ·  Next decision in {turns_away} turn{'s' if turns_away != 1 else ''}")
+    else:
+        embed.set_footer(text="⚡ Auto-simulation — strategic decision incoming!")
+    return embed
+
+
+def build_scenario_embed(
+    scenario: Dict,
+    race: RaceState,
+    p1_user: discord.Member,
+    p2_user: discord.Member,
+    gif_url: str,
+    p1_locked: bool = False,
+    p2_locked: bool = False,
+    p1_label: Optional[str] = None,
+    p2_label: Optional[str] = None,
+) -> discord.Embed:
+    """Embed shown during a scenario pause — shows the tactical choice."""
+    embed = discord.Embed(
+        title=scenario["title"],
+        description=(
+            f"{scenario['description']}\n\n"
+            f"*{scenario['question']}*"
+        ),
+        color=0xF39C12,
+    )
+    embed.set_image(url=gif_url)
+
+    embed.add_field(
+        name="📊  Current Status",
+        value=(
+            f"**{p1_user.display_name}:** ⛽ {race.p1_fuel:.0f}%  ·  {_tire_str(race.p1_tire_wear, race.p1_tire_type)}\n"
+            f"**{p2_user.display_name}:** ⛽ {race.p2_fuel:.0f}%  ·  {_tire_str(race.p2_tire_wear, race.p2_tire_type)}"
+        ),
+        inline=False,
+    )
+
+    gap = race.gap
+    if abs(gap) < 0.3:
+        gap_str = "⚡ **Side by side!**"
+    elif gap < 0:
+        gap_str = f"**{p1_user.display_name}** leads by **{abs(gap):.2f}s**"
+    else:
+        gap_str = f"**{p2_user.display_name}** leads by **{abs(gap):.2f}s**"
+    embed.add_field(name="🏎️  Gap", value=gap_str, inline=True)
+    embed.add_field(name="🔄  Lap", value=f"{race.lap}/{race.total_laps}", inline=True)
+
+    p1_status = (
+        f"✅  **{p1_user.display_name}** → {p1_label}" if p1_locked
+        else f"⏳  Waiting for **{p1_user.display_name}**…"
+    )
+    p2_status = (
+        f"✅  **{p2_user.display_name}** → {p2_label}" if p2_locked
+        else f"⏳  Waiting for **{p2_user.display_name}**…"
+    )
+    embed.add_field(name="📡  Driver Status", value=f"{p1_status}\n{p2_status}", inline=False)
+    embed.set_footer(text="Both drivers must choose · Auto-resolves in 30 seconds")
+    return embed
+
+
 def build_challenge_embed(
     challenger: discord.Member, opponent: discord.Member,
     p1_car: Car, p1_driver: Driver,
@@ -1241,116 +1348,212 @@ async def shop_command(interaction: discord.Interaction):
 
 # ==================== SELL CARDS ====================
 
-class SellConfirmView(discord.ui.View):
-    """Confirm/cancel selling a single card."""
+class MultiSellView(discord.ui.View):
+    """Multi-card sell — select 1-25 cards per page and sell them all at once."""
 
-    def __init__(self, player_id: str, card: Dict, user: discord.User):
-        super().__init__(timeout=60)
+    PER_PAGE = 20
+
+    def __init__(self, player_id: str, all_cards: List[Dict], user: discord.User):
+        super().__init__(timeout=180)
         self.player_id = player_id
-        self.card = card
         self.user = user
+        # Sort: common first (most likely to sell), then by rarity ascending
+        RARITY_ORDER = {"common": 0, "rare": 1, "epic": 2, "legendary": 3}
+        self.all_cards = sorted(all_cards, key=lambda c: RARITY_ORDER.get(c["rarity"], 0))
+        self.page = 0
+        self.total_pages = max(1, (len(self.all_cards) + self.PER_PAGE - 1) // self.PER_PAGE)
+        self.selected_ids: set = set()
+        self._rebuild()
 
-    @discord.ui.button(label="💰  Confirm Sale", style=discord.ButtonStyle.success)
-    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+    def _page_cards(self) -> List[Dict]:
+        start = self.page * self.PER_PAGE
+        return self.all_cards[start:start + self.PER_PAGE]
+
+    def _total_value(self) -> int:
+        return sum(
+            card_module.SELL_VALUES.get(c["rarity"], 0)
+            for c in self.all_cards if c["id"] in self.selected_ids
+        )
+
+    def _rebuild(self):
+        self.clear_items()
+        page_cards = self._page_cards()
+
+        if page_cards:
+            options = []
+            for card in page_cards:
+                emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+                price = card_module.SELL_VALUES.get(card["rarity"], 0)
+                if card["type"] == "driver":
+                    label = f"{card['name']} ({card['code']})"
+                elif card["type"] == "team_asset":
+                    label = f"🏗️ {card['name']} ({card.get('role','?')})"
+                else:
+                    label = card["name"]
+                label = label[:95]
+                desc = f"{card['rarity'].title()} · {price:,} 💰"
+                options.append(discord.SelectOption(
+                    label=label,
+                    value=card["id"],
+                    description=desc[:100],
+                    emoji=emoji,
+                    default=(card["id"] in self.selected_ids),
+                ))
+
+            select = discord.ui.Select(
+                placeholder=f"Pick cards to sell (pg {self.page+1}/{self.total_pages}) · {len(self.selected_ids)} selected",
+                options=options,
+                min_values=0,
+                max_values=len(options),
+                row=0,
+            )
+            select.callback = self._on_select
+            self.add_item(select)
+
+        # Page nav
+        if self.total_pages > 1:
+            prev_btn = discord.ui.Button(label="◀", style=discord.ButtonStyle.secondary, disabled=(self.page == 0), row=1)
+            prev_btn.callback = self._go_prev
+            self.add_item(prev_btn)
+
+            page_lbl = discord.ui.Button(label=f"{self.page+1}/{self.total_pages}", style=discord.ButtonStyle.primary, disabled=True, row=1)
+            self.add_item(page_lbl)
+
+            next_btn = discord.ui.Button(label="▶", style=discord.ButtonStyle.secondary, disabled=(self.page >= self.total_pages - 1), row=1)
+            next_btn.callback = self._go_next
+            self.add_item(next_btn)
+
+        # Sell / Clear / Close
+        total_val = self._total_value()
+        sell_label = (f"💰 Sell {len(self.selected_ids)} cards · +{total_val:,} coins" if self.selected_ids else "Select cards to sell")[:80]
+        sell_btn = discord.ui.Button(
+            label=sell_label,
+            style=discord.ButtonStyle.success if self.selected_ids else discord.ButtonStyle.secondary,
+            disabled=not self.selected_ids,
+            row=2,
+        )
+        sell_btn.callback = self._on_sell
+        self.add_item(sell_btn)
+
+        clear_btn = discord.ui.Button(label="✖ Clear All", style=discord.ButtonStyle.danger, disabled=not self.selected_ids, row=2)
+        clear_btn.callback = self._on_clear
+        self.add_item(clear_btn)
+
+        close_btn = discord.ui.Button(label="Close", style=discord.ButtonStyle.secondary, row=2)
+        close_btn.callback = self._on_close
+        self.add_item(close_btn)
+
+    def _build_embed(self) -> discord.Embed:
+        balance   = db.get_coins(self.player_id)
+        n_sel     = len(self.selected_ids)
+        total_val = self._total_value()
+
+        lines = [
+            f"💰 **Balance:** {balance:,} coins",
+            "",
+            "**Sell Prices:**",
+            "⚪ Common **75**  ·  💙 Rare **200**  ·  💜 Epic **600**  ·  👑 Legendary **1,500**",
+        ]
+        if n_sel:
+            lines.append(f"\n✅ **{n_sel} card{'s' if n_sel != 1 else ''} selected** — earns **+{total_val:,} coins**")
+        else:
+            lines.append("\n*Select cards from the dropdown, then hit Sell.*")
+
+        embed = discord.Embed(
+            title="💸  Sell Cards",
+            description="\n".join(lines),
+            color=0xF39C12,
+        )
+        equipped = db.get_equipped(self.player_id)
+        eq_ids = {equipped.get("driver_id"), equipped.get("car_id")} | set(equipped.get("team_assets", []))
+        equipped_selected = [c for c in self.all_cards if c["id"] in self.selected_ids and c["id"] in eq_ids]
+        if equipped_selected:
+            embed.add_field(
+                name="⚠️ Warning",
+                value=f"**{len(equipped_selected)}** selected card(s) are currently equipped — selling them will unequip.",
+                inline=False,
+            )
+        embed.set_footer(text=f"{len(self.all_cards)} cards total · Page {self.page+1}/{self.total_pages}")
+        return embed
+
+    async def _check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user.id:
             await interaction.response.send_message("This isn't your menu!", ephemeral=True)
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        page_ids = {c["id"] for c in self._page_cards()}
+        self.selected_ids -= page_ids
+        self.selected_ids.update(interaction.data["values"])
+        self._rebuild()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def _go_prev(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.page = max(0, self.page - 1)
+        self._rebuild()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def _go_next(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.page = min(self.total_pages - 1, self.page + 1)
+        self._rebuild()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def _on_sell(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        if not self.selected_ids:
+            await interaction.response.send_message("No cards selected!", ephemeral=True)
             return
-        sell_price = card_module.SELL_VALUES.get(self.card["rarity"], 0)
-        removed = db.remove_card(self.player_id, self.card["id"])
-        if not removed:
-            await interaction.response.edit_message(content="❌ Card not found — it may have already been sold.", embed=None, view=None)
-            return
-        new_balance = db.add_coins(self.player_id, sell_price)
-        emoji = card_module.RARITY_EMOJIS.get(self.card["rarity"], "")
-        name = self.card["name"]
+
+        total_coins = 0
+        sold_cards  = []
+        for card in list(self.all_cards):
+            if card["id"] in self.selected_ids:
+                if db.remove_card(self.player_id, card["id"]):
+                    total_coins += card_module.SELL_VALUES.get(card["rarity"], 0)
+                    sold_cards.append(card)
+
+        new_balance = db.add_coins(self.player_id, total_coins)
+
+        rarity_counts: Dict[str, int] = {}
+        for c in sold_cards:
+            rarity_counts[c["rarity"]] = rarity_counts.get(c["rarity"], 0) + 1
+
+        summary = []
+        for rarity in ("legendary", "epic", "rare", "common"):
+            cnt = rarity_counts.get(rarity, 0)
+            if cnt:
+                emoji = card_module.RARITY_EMOJIS.get(rarity, "")
+                val   = card_module.SELL_VALUES.get(rarity, 0) * cnt
+                summary.append(f"{emoji} **{rarity.title()}** × {cnt}  —  +**{val:,} coins**")
+
         embed = discord.Embed(
-            title="💰  Card Sold!",
+            title="✅  Cards Sold!",
             description=(
-                f"{emoji}  **{name}** sold for **+{sell_price:,} 💰**\n"
-                f"New balance: **{new_balance:,} 💰**"
+                "\n".join(summary) + "\n\n"
+                f"**Total earned:** +**{total_coins:,} coins**\n"
+                f"**New balance: {new_balance:,} coins**"
             ),
             color=0x2ECC71,
         )
-        for child in self.children:
-            child.disabled = True
-        await interaction.response.edit_message(embed=embed, view=self)
+        embed.set_footer(text=f"Sold {len(sold_cards)} card{'s' if len(sold_cards) != 1 else ''}")
+        await interaction.response.edit_message(embed=embed, view=None)
 
-    @discord.ui.button(label="✖  Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("This isn't your menu!", ephemeral=True)
-            return
-        await interaction.response.edit_message(content="Sale cancelled.", embed=None, view=None)
+    async def _on_clear(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.selected_ids.clear()
+        self._rebuild()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
 
-
-class SellSelectView(discord.ui.View):
-    """Select menu letting the player choose which card to sell."""
-
-    def __init__(self, player_id: str, all_cards: List[Dict], user: discord.User):
-        super().__init__(timeout=60)
-        self.player_id = player_id
-        self.user = user
-        self.card_map: Dict[str, Dict] = {}
-
-        RARITY_ORDER = {"legendary": 0, "epic": 1, "rare": 2, "common": 3}
-        sorted_cards = sorted(all_cards, key=lambda c: RARITY_ORDER.get(c["rarity"], 9))[:25]
-
-        options = []
-        for card in sorted_cards:
-            emoji_map = {"legendary": "👑", "epic": "💜", "rare": "💙", "common": "⚪"}
-            emoji = emoji_map.get(card["rarity"], "")
-            price = card_module.SELL_VALUES.get(card["rarity"], 0)
-            if card["type"] == "driver":
-                label = f"{card['name']} ({card['code']})"
-            else:
-                label = card["name"]
-            label = label[:95]
-            desc = f"{card['rarity'].title()}  ·  Sells for {price:,} 💰"
-            options.append(discord.SelectOption(label=label, value=card["id"], description=desc, emoji=emoji))
-            self.card_map[card["id"]] = card
-
-        self.select = discord.ui.Select(
-            placeholder="Choose a card to sell…",
-            options=options,
-            min_values=1,
-            max_values=1,
-        )
-        self.select.callback = self.on_select
-        self.add_item(self.select)
-
-    async def on_select(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user.id:
-            await interaction.response.send_message("This isn't your menu!", ephemeral=True)
-            return
-        card_id = self.select.values[0]
-        card = self.card_map.get(card_id)
-        if not card:
-            await interaction.response.edit_message(content="❌ Card not found.", embed=None, view=None)
-            return
-        sell_price = card_module.SELL_VALUES.get(card["rarity"], 0)
-        emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
-        if card["type"] == "driver":
-            name = f"{card['name']} ({card['code']})"
-        else:
-            name = card["name"]
-        embed = discord.Embed(
-            title="🏷️  Confirm Sale",
-            description=(
-                f"{emoji}  **{name}**\n"
-                f"Rarity: **{card['rarity'].title()}**\n\n"
-                f"You will receive **{sell_price:,} 💰** for this card.\n"
-                f"*This cannot be undone!*"
-            ),
-            color=card_module.RARITY_COLORS.get(card["rarity"], 0x95A5A6),
-        )
-        img = f1_images.get_card_image(card)
-        if img:
-            embed.set_image(url=img)
-        confirm_view = SellConfirmView(self.player_id, card, self.user)
-        await interaction.response.edit_message(embed=embed, view=confirm_view)
+    async def _on_close(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        await interaction.response.edit_message(content="Sell menu closed.", embed=None, view=None)
 
 
-@f1_group.command(name="sell", description="Sell a card from your collection for race credits")
+@f1_group.command(name="sell", description="Sell cards from your collection for race credits — pick multiple at once")
 async def f1_sell(interaction: discord.Interaction):
     player_id = str(interaction.user.id)
     db.ensure_player(player_id, interaction.user.name)
@@ -1368,25 +1571,8 @@ async def f1_sell(interaction: discord.Interaction):
         )
         return
 
-    balance = db.get_coins(player_id)
-    SELL_PREVIEW = {"common": 75, "rare": 200, "epic": 600, "legendary": 1500}
-    embed = discord.Embed(
-        title="💸  Sell Cards",
-        description=(
-            f"**Your balance:** {balance:,} 💰\n\n"
-            f"**Sell prices:**\n"
-            f"⚪ Common — **{SELL_PREVIEW['common']:,} 💰**\n"
-            f"💙 Rare — **{SELL_PREVIEW['rare']:,} 💰**\n"
-            f"💜 Epic — **{SELL_PREVIEW['epic']:,} 💰**\n"
-            f"👑 Legendary — **{SELL_PREVIEW['legendary']:,} 💰**\n\n"
-            f"Select a card from the dropdown to sell it."
-        ),
-        color=0xF39C12,
-    )
-    embed.set_footer(text=f"You have {len(all_cards)} card{'s' if len(all_cards) != 1 else ''} total.")
-
-    view = SellSelectView(player_id, all_cards, interaction.user)
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    view = MultiSellView(player_id, all_cards, interaction.user)
+    await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
 
 
 # ==================== REGISTER COMMAND GROUPS ====================
@@ -1396,82 +1582,162 @@ bot.tree.add_command(f1_group)
 bot.tree.add_command(config_group)
 
 
-# ==================== LIVE RACE VIEW ====================
+# ==================== AUTO-SIMULATION RACE SYSTEM ====================
 
-class LiveRaceView(discord.ui.View):
-    """Channel-based race — both players choose in one live message."""
+RACE_SCENARIOS: Dict[int, Dict] = {
+    3: {
+        "id": "pit_window",
+        "title": "🛑  Pit Window Open!",
+        "description": (
+            "**Lap 1 complete.** The optimal pit window has arrived — fresh rubber could be decisive, "
+            "but staying out preserves precious track position."
+        ),
+        "question": "Do you pit for fresh tyres, or push on?",
+        "options": [
+            {"label": "⛽ Pit Now",   "value": "pit_stop",   "style": discord.ButtonStyle.danger},
+            {"label": "🏎️ Stay Out", "value": "same_speed", "style": discord.ButtonStyle.success},
+        ],
+    },
+    6: {
+        "id": "drs_attack",
+        "title": "💨  DRS Zone — Attack or Manage!",
+        "description": (
+            "**Mid-race.** Both cars enter the longest DRS activation zone on the circuit. "
+            "The gap is close enough for a real overtaking move — but pushing flat out burns rubber."
+        ),
+        "question": "Go flat out through the DRS zone, or conserve tyres for the final laps?",
+        "options": [
+            {"label": "🔥 Maximum Attack",   "value": "accelerate", "style": discord.ButtonStyle.danger},
+            {"label": "🛡️ Conserve & Cover", "value": "slow_down",  "style": discord.ButtonStyle.secondary},
+        ],
+    },
+    9: {
+        "id": "late_strategy",
+        "title": "🚗  Late Race Strategy Call!",
+        "description": (
+            "**Final third.** Tyre wear is becoming critical and fuel loads are dropping fast. "
+            "The race is still in the balance — every call from here is season-defining."
+        ),
+        "question": "Push hard for the gap, manage to the flag, or gamble on an emergency stop?",
+        "options": [
+            {"label": "🔥 Push Hard",      "value": "accelerate", "style": discord.ButtonStyle.success},
+            {"label": "⏱️ Manage Tyres",  "value": "slow_down",  "style": discord.ButtonStyle.secondary},
+            {"label": "⛽ Emergency Pit",  "value": "pit_stop",   "style": discord.ButtonStyle.danger},
+        ],
+    },
+    11: {
+        "id": "final_lap",
+        "title": "🏁  FINAL LAP — Last Call!",
+        "description": (
+            "**The white flag is out.** This is it — the last lap of the race. "
+            "Everything you've built throughout this race comes down to the next few corners."
+        ),
+        "question": "Absolute maximum attack, or protect what you have?",
+        "options": [
+            {"label": "🔥 FLAT OUT!",        "value": "accelerate", "style": discord.ButtonStyle.danger},
+            {"label": "🛡️ Protect the Gap", "value": "same_speed", "style": discord.ButtonStyle.success},
+        ],
+    },
+}
 
-    def __init__(self, race: RaceState, p1_user: discord.Member, p2_user: discord.Member, gif_url: str):
-        super().__init__(timeout=None)
-        self.race = race
-        self.p1_user = p1_user
-        self.p2_user = p2_user
-        self.gif_url = gif_url
+RAIN_SCENARIO_OVERRIDE = {
+    "id": "rain_call",
+    "title": "🌧️  RAIN! Weather Gamble!",
+    "description": (
+        "**Rain is falling on the circuit!** Slick tyres are becoming dangerously unpredictable "
+        "lap by lap. Box for wet tyres and surrender track position, or gamble on the drying line?"
+    ),
+    "question": "Make the call — box for wets or stay on slicks?",
+    "options": [
+        {"label": "🌧️ Box for Wets",   "value": "pit_stop",   "style": discord.ButtonStyle.primary},
+        {"label": "🎰 Stay on Slicks", "value": "same_speed", "style": discord.ButtonStyle.danger},
+    ],
+}
+
+SCENARIO_TURNS = sorted(RACE_SCENARIOS.keys())
+
+
+class ScenarioView(discord.ui.View):
+    """Shown at key race moments — both players pick a tactic then simulation continues."""
+
+    def __init__(
+        self,
+        p1_user: discord.Member,
+        p2_user: discord.Member,
+        scenario: Dict,
+        race: RaceState,
+        message: discord.Message,
+        gif_url: str,
+    ):
+        super().__init__(timeout=30)
+        self.p1_user   = p1_user
+        self.p2_user   = p2_user
+        self.scenario  = scenario
+        self.race      = race
+        self.message   = message
+        self.gif_url   = gif_url
         self.p1_choice: Optional[str] = None
         self.p2_choice: Optional[str] = None
-        self.lock = asyncio.Lock()
-        self.turn_ready = asyncio.Event()
-        self.message: Optional[discord.Message] = None
+        self.p1_label:  Optional[str] = None
+        self.p2_label:  Optional[str] = None
+        self.lock        = asyncio.Lock()
+        self.both_chosen = asyncio.Event()
 
-    def _side(self, user: discord.Member) -> Optional[str]:
-        if user.id == self.p1_user.id:
-            return "p1"
-        if user.id == self.p2_user.id:
-            return "p2"
-        return None
+        for opt in scenario["options"]:
+            btn = discord.ui.Button(label=opt["label"], style=opt["style"], row=0)
+            value = opt["value"]
+            label = opt["label"]
 
-    async def _handle(self, interaction: discord.Interaction, choice: str):
-        side = self._side(interaction.user)
-        if not side:
+            async def _cb(interaction: discord.Interaction, _v=value, _l=label):
+                await self._handle(interaction, _v, _l)
+
+            btn.callback = _cb
+            self.add_item(btn)
+
+    async def _handle(self, interaction: discord.Interaction, value: str, label: str):
+        is_p1 = interaction.user.id == self.p1_user.id
+        is_p2 = interaction.user.id == self.p2_user.id
+        if not (is_p1 or is_p2):
             await interaction.response.send_message("You're not in this race!", ephemeral=True)
             return
 
         async with self.lock:
-            already = self.p1_choice if side == "p1" else self.p2_choice
-            if already:
-                await interaction.response.send_message("You've already locked in your choice!", ephemeral=True)
-                return
-
-            if side == "p1":
-                self.p1_choice = choice
+            if is_p1:
+                if self.p1_choice:
+                    await interaction.response.send_message("Already locked in!", ephemeral=True)
+                    return
+                self.p1_choice = value
+                self.p1_label  = label
             else:
-                self.p2_choice = choice
+                if self.p2_choice:
+                    await interaction.response.send_message("Already locked in!", ephemeral=True)
+                    return
+                self.p2_choice = value
+                self.p2_label  = label
 
-            emoji, label = CHOICE_LABELS[choice]
             await interaction.response.send_message(
-                f"{emoji}  **{label}** locked in!  Waiting for your opponent…",
-                ephemeral=True,
+                f"✅  **{label}** locked in!  Waiting for your opponent…", ephemeral=True
             )
 
+            # Update embed live as players lock in
             if self.message:
                 try:
-                    embed = build_live_embed(
-                        self.race, self.p1_user, self.p2_user, self.gif_url,
-                        p1_locked=bool(self.p1_choice),
-                        p2_locked=bool(self.p2_choice),
+                    await self.message.edit(
+                        embed=build_scenario_embed(
+                            self.scenario, self.race,
+                            self.p1_user, self.p2_user, self.gif_url,
+                            p1_locked=bool(self.p1_choice),
+                            p2_locked=bool(self.p2_choice),
+                            p1_label=self.p1_label,
+                            p2_label=self.p2_label,
+                        ),
+                        view=self,
                     )
-                    await self.message.edit(embed=embed, view=self)
                 except Exception:
                     pass
 
             if self.p1_choice and self.p2_choice:
-                self.turn_ready.set()
-
-    @discord.ui.button(label="🚀  Push Hard", style=discord.ButtonStyle.success, row=0)
-    async def btn_accelerate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "accelerate")
-
-    @discord.ui.button(label="➡️  Maintain", style=discord.ButtonStyle.secondary, row=0)
-    async def btn_same(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "same_speed")
-
-    @discord.ui.button(label="🛑  Lift Off", style=discord.ButtonStyle.danger, row=0)
-    async def btn_slow(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "slow_down")
-
-    @discord.ui.button(label="⛽  Pit Stop", style=discord.ButtonStyle.primary, row=0)
-    async def btn_pit(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "pit_stop")
+                self.both_chosen.set()
 
 
 class ChallengeView(discord.ui.View):
@@ -1497,12 +1763,10 @@ class ChallengeView(discord.ui.View):
             return
         self.stop()
 
-        view = LiveRaceView(self.race, self.challenger, self.opponent, self.gif_url)
-        embed = build_live_embed(self.race, self.challenger, self.opponent, self.gif_url)
-        await interaction.response.edit_message(embed=embed, view=view)
+        embed = build_auto_embed(self.race, self.challenger, self.opponent, self.gif_url, [])
+        await interaction.response.edit_message(embed=embed, view=None)
         msg = await interaction.original_response()
-        view.message = msg
-        asyncio.create_task(run_live_race(self.race, self.challenger, self.opponent, view, interaction.channel))
+        asyncio.create_task(run_auto_race(self.race, self.challenger, self.opponent, msg, self.gif_url, interaction.channel))
 
     @discord.ui.button(label="❌  Decline", style=discord.ButtonStyle.danger)
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1524,37 +1788,89 @@ class ChallengeView(discord.ui.View):
         active_race_pairs.pop(str(self.opponent.id), None)
 
 
-async def run_live_race(
+def _auto_choice(race: RaceState, player: str) -> str:
+    """Smart auto-choice for non-scenario turns based on car state."""
+    fuel = race.p1_fuel if player == "p1" else race.p2_fuel
+    wear = race.p1_tire_wear if player == "p1" else race.p2_tire_wear
+    if wear > 75 or fuel < 25:
+        weights = [0.15, 0.55, 0.30]  # accelerate / same / slow
+    elif wear > 50 or fuel < 50:
+        weights = [0.25, 0.55, 0.20]
+    else:
+        weights = [0.30, 0.50, 0.20]
+    return random.choices(["accelerate", "same_speed", "slow_down"], weights=weights)[0]
+
+
+async def run_auto_race(
     race: RaceState,
     p1_user: discord.Member,
     p2_user: discord.Member,
-    view: LiveRaceView,
+    message: discord.Message,
+    gif_url: str,
     channel,
 ):
-    """Background race loop — waits for both choices each turn, then processes."""
-    TURN_TIMEOUT = 45
+    """Fully auto-simulated race — plays itself with commentary, pauses 4× for player decisions."""
+    AUTO_DELAY    = 2.8   # seconds between auto turns
+    SCENARIO_WAIT = 30    # seconds before scenario auto-resolves
     commentary_log: List[str] = []
 
+    # Find next scenario turn for footer hint
+    def _next_scenario(current_turn: int) -> Optional[int]:
+        return next((t for t in SCENARIO_TURNS if t > current_turn), None)
+
     try:
-        while race.turn < race.max_turns and race.lap <= race.total_laps:
-            view.turn_ready.clear()
+        for turn_num in range(1, race.max_turns + 1):
+            scenario = None
+            if turn_num in RACE_SCENARIOS:
+                scenario = RACE_SCENARIOS[turn_num].copy()
+                if race.weather == "rain" and turn_num in (6, 9):
+                    scenario = RAIN_SCENARIO_OVERRIDE.copy()
 
-            try:
-                await asyncio.wait_for(view.turn_ready.wait(), timeout=TURN_TIMEOUT)
-            except asyncio.TimeoutError:
-                pass
+            if scenario:
+                # ── SCENARIO PAUSE ──────────────────────────────────
+                sv = ScenarioView(p1_user, p2_user, scenario, race, message, gif_url)
+                try:
+                    await message.edit(
+                        embed=build_scenario_embed(scenario, race, p1_user, p2_user, gif_url),
+                        view=sv,
+                    )
+                except Exception:
+                    pass
 
-            async with view.lock:
-                p1_choice = view.p1_choice or "same_speed"
-                p2_choice = view.p2_choice or "same_speed"
-                view.p1_choice = None
-                view.p2_choice = None
-                view.turn_ready.clear()
+                try:
+                    await asyncio.wait_for(sv.both_chosen.wait(), timeout=SCENARIO_WAIT)
+                except asyncio.TimeoutError:
+                    pass
 
+                p1_choice = sv.p1_choice or "same_speed"
+                p2_choice = sv.p2_choice or "same_speed"
+                p1_label  = sv.p1_label  or "Auto (timed out)"
+                p2_label  = sv.p2_label  or "Auto (timed out)"
+
+                # Show both choices resolved briefly
+                try:
+                    await message.edit(
+                        embed=build_scenario_embed(
+                            scenario, race, p1_user, p2_user, gif_url,
+                            p1_locked=True, p2_locked=True,
+                            p1_label=p1_label, p2_label=p2_label,
+                        ),
+                        view=None,
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(2.0)
+
+            else:
+                # ── AUTO TURN ────────────────────────────────────────
+                p1_choice = _auto_choice(race, "p1")
+                p2_choice = _auto_choice(race, "p2")
+
+            # Process the turn
             result = race_engine.process_turn(race, p1_choice, p2_choice)
-            event = result.get("event")
+            event  = result.get("event")
 
-            # Generate live commentary for this turn
+            # Generate commentary
             try:
                 new_lines = commentary_engine.generate_turn_commentary(
                     turn=race.turn,
@@ -1579,46 +1895,49 @@ async def run_live_race(
             except Exception:
                 pass
 
+            # Check for early end
             if result.get("dnf") or result.get("race_finished") or race.lap > race.total_laps:
-                await finish_live_race(race, p1_user, p2_user, view, result, channel)
+                await finish_auto_race(race, p1_user, p2_user, message, result, channel)
                 return
 
-            if view.message:
-                try:
-                    embed = build_live_embed(
-                        race, p1_user, p2_user, view.gif_url,
-                        last_event=event,
-                        commentary_lines=commentary_log,
-                    )
-                    await view.message.edit(embed=embed, view=view)
-                except Exception:
-                    pass
+            # Update live embed
+            try:
+                next_s = _next_scenario(race.turn)
+                await message.edit(
+                    embed=build_auto_embed(race, p1_user, p2_user, gif_url, commentary_log, next_s),
+                    view=None,
+                )
+            except Exception:
+                pass
 
-        await finish_live_race(race, p1_user, p2_user, view, {"race_finished": True}, channel)
+            if turn_num < race.max_turns:
+                await asyncio.sleep(AUTO_DELAY)
+
+        # All turns done
+        await finish_auto_race(race, p1_user, p2_user, message, {"race_finished": True}, channel)
+
     except Exception as e:
-        print(f"Race loop error: {e}")
+        print(f"Auto race error: {e}")
         active_race_pairs.pop(str(race.player1_id), None)
         active_race_pairs.pop(str(race.player2_id), None)
-        view.stop()
 
 
-async def finish_live_race(
+async def finish_auto_race(
     race: RaceState,
     p1_user: discord.Member,
     p2_user: discord.Member,
-    view: LiveRaceView,
+    message: discord.Message,
     result: Dict,
     channel,
 ):
-    """Handle race end — award coins, post results embed in channel."""
+    """Award coins and post results at the end of an auto-simulated race."""
     active_race_pairs.pop(str(race.player1_id), None)
     active_race_pairs.pop(str(race.player2_id), None)
-    view.stop()
 
     if result.get("dnf"):
         dnf_side = result["dnf"]
-        winner_id = race.player2_id if dnf_side == "p1" else race.player1_id
-        loser_id  = race.player1_id if dnf_side == "p1" else race.player2_id
+        winner_id   = race.player2_id if dnf_side == "p1" else race.player1_id
+        loser_id    = race.player1_id if dnf_side == "p1" else race.player2_id
         winner_user = p2_user if dnf_side == "p1" else p1_user
         loser_user  = p1_user if dnf_side == "p1" else p2_user
         reason = result.get("reason", "unknown").replace("_", " ").title()
@@ -1634,9 +1953,12 @@ async def finish_live_race(
             color=0xE74C3C,
         )
         embed.add_field(name="🏆 Winner", value=winner_user.mention, inline=True)
-        embed.add_field(name="💰 Rewards",
-            value=f"🥇 {winner_user.mention}: **+100 coins** ({winner_coins:,} total)\n"
-                  f"🔧 {loser_user.mention}: **+10 coins** ({loser_coins:,} total)",
+        embed.add_field(
+            name="💰 Rewards",
+            value=(
+                f"🥇 {winner_user.mention}: **+100 coins** ({winner_coins:,} total)\n"
+                f"🔧 {loser_user.mention}: **+10 coins** ({loser_coins:,} total)"
+            ),
             inline=False,
         )
     else:
@@ -1658,7 +1980,7 @@ async def finish_live_race(
             color=0xFFD700,
         )
         embed.add_field(name="🥈 Runner-up", value=loser_user.mention, inline=True)
-        embed.add_field(name="⏱️ Gap", value=gap_text, inline=True)
+        embed.add_field(name="⏱️ Gap",       value=gap_text,           inline=True)
         embed.add_field(
             name="🔧 Pit Stops",
             value=f"{p1_user.display_name}: {race.p1_pit_stops}  ·  {p2_user.display_name}: {race.p2_pit_stops}",
@@ -1675,10 +1997,7 @@ async def finish_live_race(
         embed.set_footer(text="Earn more cards at /pack daily  ·  Upgrade with /shop")
 
     try:
-        if view.message:
-            await view.message.edit(embed=embed, view=None)
-        elif channel:
-            await channel.send(embed=embed)
+        await message.edit(embed=embed, view=None)
     except Exception:
         if channel:
             try:
