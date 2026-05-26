@@ -658,64 +658,59 @@ def build_auto_embed(
     p1_pos_icon = "🥇" if race.p1_position == 1 else "🥈"
     p2_pos_icon = "🥇" if race.p2_position == 1 else "🥈"
 
-    # Lap progress bar
-    laps_done = race.lap - 1
-    lap_bar = "🟥" * laps_done + "⬜" * (race.total_laps - laps_done)
-    turn_in_lap = ((race.turn - 1) % 4) + 1 if race.turn > 0 else 1
-    turn_bar = "🟧" * turn_in_lap + "⬜" * (4 - turn_in_lap)
+    title = f"🏎️  F1 Race  ·  Lap {race.lap} / {race.total_laps}  ·  Turn {race.turn} / {race.max_turns}"
 
-    title = f"🏎️  F1 Race  ·  Lap {race.lap}/{race.total_laps}  ·  Turn {race.turn}/{race.max_turns}"
+    lines = []
+    if race.weather == "rain":
+        lines.append("🌧️  **WET CONDITIONS**")
+        lines.append("")
+    if commentary_log:
+        lines.append(commentary_engine.format_commentary(commentary_log[-3:]))
+    else:
+        lines.append("> *Race underway…*")
 
-    weather_line = "🌧️  **WET CONDITIONS — Intermediates recommended!**\n\n" if race.weather == "rain" else ""
-    commentary_block = commentary_engine.format_commentary(commentary_log[-3:]) if commentary_log else "> *Race underway…*"
-    desc = f"{weather_line}{commentary_block}"
-
-    embed = discord.Embed(title=title, description=desc, color=0xE74C3C)
+    embed = discord.Embed(title=title, description="\n".join(lines), color=0xE74C3C)
     embed.set_image(url=gif_url)
-
-    # Race progress
-    embed.add_field(
-        name="📊  Race Progress",
-        value=f"**Laps:** {lap_bar}  `{race.lap}/{race.total_laps}`\n**Turn:** {turn_bar}  `{turn_in_lap}/4`",
-        inline=False,
-    )
 
     # Gap
     gap = race.gap
     if abs(gap) < 0.3:
-        gap_str = "**⚡ SIDE BY SIDE — WHEEL TO WHEEL!**"
+        gap_str = "⚡ **SIDE BY SIDE — WHEEL TO WHEEL!**"
     elif gap < 0:
-        gap_str = f"🏎️ **{p1_user.display_name}** leads by **{abs(gap):.2f}s**"
+        gap_str = f"**{p1_user.display_name}** leads by **{abs(gap):.2f}s**"
     else:
-        gap_str = f"🏎️ **{p2_user.display_name}** leads by **{abs(gap):.2f}s**"
+        gap_str = f"**{p2_user.display_name}** leads by **{abs(gap):.2f}s**"
 
-    embed.add_field(name=f"{weather_icon}  Live Gap", value=gap_str, inline=False)
+    embed.add_field(name=f"{weather_icon}  Gap", value=gap_str, inline=False)
 
-    # Player 1 status
-    p1_val = (
-        f"👤 **{race.p1_driver.name}** `{race.p1_driver.code}`\n"
-        f"🏎️ {race.p1_car.name}\n\n"
-        f"⛽ {_fuel_str(race.p1_fuel)}\n"
-        f"🔧 {_tire_str(race.p1_tire_wear, race.p1_tire_type)}\n"
-        f"🔩 Pit stops: **{race.p1_pit_stops}**"
+    # Fuel & tyre as clean single lines
+    def _status(fuel: float, wear: float, tire_type: str, pits: int) -> str:
+        fuel_icon = "🟢" if fuel > 50 else ("🟡" if fuel > 25 else "🔴")
+        tire_health = 100.0 - wear
+        tire_icon = "🟢" if tire_health > 60 else ("🟡" if tire_health > 30 else "🔴")
+        t = {"soft": "Soft", "medium": "Med", "hard": "Hard", "wet": "Wet"}.get(tire_type, tire_type.title())
+        return (
+            f"⛽  {fuel_icon}  **{fuel:.0f}%** fuel\n"
+            f"🔧  {tire_icon}  **{t}** · {tire_health:.0f}% life\n"
+            f"🔩  **{pits}** pit stop{'s' if pits != 1 else ''}"
+        )
+
+    embed.add_field(
+        name=f"{p1_pos_icon}  {p1_user.display_name}  ·  {race.p1_driver.code}",
+        value=_status(race.p1_fuel, race.p1_tire_wear, race.p1_tire_type, race.p1_pit_stops),
+        inline=True,
     )
-    embed.add_field(name=f"{p1_pos_icon}  {p1_user.display_name}", value=p1_val, inline=True)
-
-    # Player 2 status
-    p2_val = (
-        f"👤 **{race.p2_driver.name}** `{race.p2_driver.code}`\n"
-        f"🏎️ {race.p2_car.name}\n\n"
-        f"⛽ {_fuel_str(race.p2_fuel)}\n"
-        f"🔧 {_tire_str(race.p2_tire_wear, race.p2_tire_type)}\n"
-        f"🔩 Pit stops: **{race.p2_pit_stops}**"
+    embed.add_field(
+        name=f"{p2_pos_icon}  {p2_user.display_name}  ·  {race.p2_driver.code}",
+        value=_status(race.p2_fuel, race.p2_tire_wear, race.p2_tire_type, race.p2_pit_stops),
+        inline=True,
     )
-    embed.add_field(name=f"{p2_pos_icon}  {p2_user.display_name}", value=p2_val, inline=True)
 
     if next_scenario_turn and race.turn < next_scenario_turn:
         turns_away = next_scenario_turn - race.turn
-        embed.set_footer(text=f"⚡ Auto-simulation  ·  Next decision point in {turns_away} turn{'s' if turns_away != 1 else ''}")
+        embed.set_footer(text=f"⚡ Auto-sim  ·  Decision point in {turns_away} turn{'s' if turns_away != 1 else ''}")
     else:
-        embed.set_footer(text="⚡ Auto-simulation — strategic decision incoming!")
+        embed.set_footer(text="⚡ Auto-sim  ·  Strategic decision incoming!")
     return embed
 
 
