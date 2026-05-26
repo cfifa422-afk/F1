@@ -662,8 +662,7 @@ def build_auto_embed(
 
     lines = []
     if race.weather == "rain":
-        lines.append("🌧️  **WET CONDITIONS**")
-        lines.append("")
+        lines.append("🌧️  **WET CONDITIONS**\n")
     if commentary_log:
         lines.append(commentary_engine.format_commentary(commentary_log[-3:]))
     else:
@@ -672,7 +671,6 @@ def build_auto_embed(
     embed = discord.Embed(title=title, description="\n".join(lines), color=0xE74C3C)
     embed.set_image(url=gif_url)
 
-    # Gap
     gap = race.gap
     if abs(gap) < 0.3:
         gap_str = "⚡ **SIDE BY SIDE — WHEEL TO WHEEL!**"
@@ -682,35 +680,7 @@ def build_auto_embed(
         gap_str = f"**{p2_user.display_name}** leads by **{abs(gap):.2f}s**"
 
     embed.add_field(name=f"{weather_icon}  Gap", value=gap_str, inline=False)
-
-    # Fuel & tyre as clean single lines
-    def _status(fuel: float, wear: float, tire_type: str, pits: int) -> str:
-        fuel_icon = "🟢" if fuel > 50 else ("🟡" if fuel > 25 else "🔴")
-        tire_health = 100.0 - wear
-        tire_icon = "🟢" if tire_health > 60 else ("🟡" if tire_health > 30 else "🔴")
-        t = {"soft": "Soft", "medium": "Med", "hard": "Hard", "wet": "Wet"}.get(tire_type, tire_type.title())
-        return (
-            f"⛽  {fuel_icon}  **{fuel:.0f}%** fuel\n"
-            f"🔧  {tire_icon}  **{t}** · {tire_health:.0f}% life\n"
-            f"🔩  **{pits}** pit stop{'s' if pits != 1 else ''}"
-        )
-
-    embed.add_field(
-        name=f"{p1_pos_icon}  {p1_user.display_name}  ·  {race.p1_driver.code}",
-        value=_status(race.p1_fuel, race.p1_tire_wear, race.p1_tire_type, race.p1_pit_stops),
-        inline=True,
-    )
-    embed.add_field(
-        name=f"{p2_pos_icon}  {p2_user.display_name}  ·  {race.p2_driver.code}",
-        value=_status(race.p2_fuel, race.p2_tire_wear, race.p2_tire_type, race.p2_pit_stops),
-        inline=True,
-    )
-
-    if next_scenario_turn and race.turn < next_scenario_turn:
-        turns_away = next_scenario_turn - race.turn
-        embed.set_footer(text=f"⚡ Auto-sim  ·  Decision point in {turns_away} turn{'s' if turns_away != 1 else ''}")
-    else:
-        embed.set_footer(text="⚡ Auto-sim  ·  Strategic decision incoming!")
+    embed.set_footer(text="⚡ Auto-simulation in progress…")
     return embed
 
 
@@ -1672,6 +1642,55 @@ RAIN_SCENARIO_OVERRIDE = {
 
 SCENARIO_TURNS = sorted(RACE_SCENARIOS.keys())
 
+# Turns where the reaction challenge fires (must not overlap with SCENARIO_TURNS)
+REACTION_TURNS = [2, 5, 8]
+
+
+class ReactionChallengeView(discord.ui.View):
+    """A timed ◀️/▶️ button challenge that appears mid-race."""
+
+    def __init__(self, direction: str, p1_user: discord.Member, p2_user: discord.Member):
+        super().__init__(timeout=6.0)
+        self.direction = direction          # "left" or "right"
+        self.p1_user   = p1_user
+        self.p2_user   = p2_user
+        self.clicks: Dict[str, tuple] = {}  # uid → (correct: bool, elapsed: float)
+        self.done      = asyncio.Event()
+        self._start    = None               # set when the view is first interacted with
+
+    async def _handle(self, interaction: discord.Interaction, clicked: str):
+        if interaction.user.id not in (self.p1_user.id, self.p2_user.id):
+            await interaction.response.send_message("❌ You're not in this race!", ephemeral=True)
+            return
+        uid = str(interaction.user.id)
+        if uid in self.clicks:
+            await interaction.response.defer()
+            return
+        if self._start is None:
+            self._start = interaction.created_at.timestamp()
+        elapsed = interaction.created_at.timestamp() - self._start
+        correct = clicked == self.direction
+        self.clicks[uid] = (correct, elapsed)
+        if correct:
+            await interaction.response.send_message(
+                f"✅ **{interaction.user.display_name}** — correct! `{elapsed:.2f}s`", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ **{interaction.user.display_name}** — wrong direction!", ephemeral=True
+            )
+        if len(self.clicks) >= 2:
+            self.done.set()
+            self.stop()
+
+    @discord.ui.button(label="◀  LEFT", style=discord.ButtonStyle.primary)
+    async def left_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "left")
+
+    @discord.ui.button(label="RIGHT  ▶", style=discord.ButtonStyle.primary)
+    async def right_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "right")
+
 
 class ScenarioView(discord.ui.View):
     """Shown at key race moments — both players pick a tactic then simulation continues."""
@@ -1926,7 +1945,82 @@ async def run_auto_race(
             except Exception:
                 pass
 
-            if turn_num < race.max_turns:
+            # ── REACTION CHALLENGE ────────────────────────────────
+            if turn_num in REACTION_TURNS and channel:
+                await asyncio.sleep(1.2)
+                direction = random.choice(["left", "right"])
+                dir_label = "◀  LEFT" if direction == "left" else "RIGHT  ▶"
+
+                rv = ReactionChallengeView(direction, p1_user, p2_user)
+                react_embed = discord.Embed(
+                    title="⚡  REACTION CHALLENGE!",
+                    description=(
+                        f"## Click  **{dir_label}**  as fast as you can!\n\n"
+                        f"First to hit the correct button gains a race advantage!"
+                    ),
+                    color=0xF1C40F,
+                )
+                react_embed.set_footer(text="⏱️  6 seconds — GO!")
+
+                react_msg = None
+                try:
+                    react_msg = await channel.send(embed=react_embed, view=rv)
+                except Exception:
+                    pass
+
+                try:
+                    await asyncio.wait_for(rv.done.wait(), timeout=6.0)
+                except asyncio.TimeoutError:
+                    rv.stop()
+
+                # Apply gap advantages
+                p1_uid = str(p1_user.id)
+                p2_uid = str(p2_user.id)
+                p1_click = rv.clicks.get(p1_uid)
+                p2_click = rv.clicks.get(p2_uid)
+
+                correct_clicks = []
+                if p1_click and p1_click[0]:
+                    correct_clicks.append((p1_user, p1_click[1], "p1"))
+                if p2_click and p2_click[0]:
+                    correct_clicks.append((p2_user, p2_click[1], "p2"))
+                correct_clicks.sort(key=lambda x: x[1])
+
+                result_lines = []
+                for i, (user, elapsed, side) in enumerate(correct_clicks):
+                    gain = 1.5 if i == 0 else 0.5
+                    if side == "p1":
+                        race.gap -= gain
+                    else:
+                        race.gap += gain
+                    medal = "🥇" if i == 0 else "🥈"
+                    result_lines.append(
+                        f"{medal} **{user.display_name}** reacted in `{elapsed:.2f}s` — **+{gain:.1f}s advantage!**"
+                    )
+
+                if p1_click and not p1_click[0]:
+                    race.gap += 0.4
+                    result_lines.append(f"❌ **{p1_user.display_name}** clicked the wrong way — penalty!")
+                if p2_click and not p2_click[0]:
+                    race.gap -= 0.4
+                    result_lines.append(f"❌ **{p2_user.display_name}** clicked the wrong way — penalty!")
+
+                if not result_lines:
+                    result_lines.append("⏱️  Nobody reacted in time — no advantage gained.")
+
+                if react_msg:
+                    result_embed = discord.Embed(
+                        title="✅  Reaction Results",
+                        description="\n".join(result_lines),
+                        color=0x2ECC71,
+                    )
+                    try:
+                        await react_msg.edit(embed=result_embed, view=None)
+                    except Exception:
+                        pass
+                await asyncio.sleep(2.0)
+
+            elif turn_num < race.max_turns:
                 await asyncio.sleep(AUTO_DELAY)
 
         # All turns done

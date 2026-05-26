@@ -4,7 +4,7 @@
       "id": "1141690369445216326",
       "username": "krazymatrix_",
       "created_at": "2026-05-25T07:08:19.760767",
-      "coins": 66900,
+      "coins": 66925,
       "equipped": {
         "driver_id": "driver_HAM_48771",
         "car_id": "starter_car_1141690369445216326",
@@ -18,11 +18,11 @@
       "last_weekly_pack": "2026-05-25T07:09:05.727312",
       "stats": {
         "wins": 4,
-        "losses": 0,
+        "losses": 1,
         "dnf": 0,
-        "total_races": 4,
-        "win_rate": 1.0,
-        "ranking_points": 200,
+        "total_races": 5,
+        "win_rate": 0.8,
+        "ranking_points": 210,
         "rank": "Bronze"
       },
       "cards": {
@@ -579,7 +579,7 @@
       "id": "1140224160774242335",
       "username": "_krazymatrix",
       "created_at": "2026-05-25T13:31:43.703481",
-      "coins": 85,
+      "coins": 185,
       "equipped": {
         "driver_id": "starter_driver_1140224160774242335",
         "car_id": "starter_car_1140224160774242335",
@@ -588,12 +588,12 @@
       "last_daily_pack": null,
       "last_weekly_pack": "2026-05-26T06:34:46.762009",
       "stats": {
-        "wins": 0,
+        "wins": 1,
         "losses": 3,
         "dnf": 1,
-        "total_races": 4,
-        "win_rate": 0.0,
-        "ranking_points": 30,
+        "total_races": 5,
+        "win_rate": 0.2,
+        "ranking_points": 80,
         "rank": "Bronze"
       },
       "cards": {
@@ -634,6 +634,17 @@
               "pit_crew_chief"
             ],
             "obtained_at": "2026-05-26T06:34:46.763273"
+          },
+          {
+            "id": "car_Haas_67068",
+            "type": "car",
+            "name": "Haas VF-23",
+            "team": "Haas",
+            "top_speed": 342,
+            "handling": 6.5,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-26T08:55:11.326355"
           }
         ],
         "team_assets": []
