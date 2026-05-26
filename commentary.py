@@ -191,4 +191,4 @@ def format_commentary(lines: List[str]) -> str:
     """Format commentary lines as a Discord embed description block."""
     if not lines:
         return "*Race in progress…*"
-    return "\n".join(f"> {line}" for line in lines)
+    return "\n\n".join(f"> {line}" for line in lines)

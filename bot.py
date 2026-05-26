@@ -658,14 +658,29 @@ def build_auto_embed(
     p1_pos_icon = "🥇" if race.p1_position == 1 else "🥈"
     p2_pos_icon = "🥇" if race.p2_position == 1 else "🥈"
 
-    title = f"🏁  F1 Race  ·  Lap {race.lap}/{race.total_laps}  ·  Turn {race.turn}/{race.max_turns}"
-    desc = commentary_engine.format_commentary(commentary_log[-5:]) if commentary_log else "*Race underway…*"
-    if race.weather == "rain":
-        desc = "🌧️ *WET CONDITIONS!*\n" + desc
+    # Lap progress bar
+    laps_done = race.lap - 1
+    lap_bar = "🟥" * laps_done + "⬜" * (race.total_laps - laps_done)
+    turn_in_lap = ((race.turn - 1) % 4) + 1 if race.turn > 0 else 1
+    turn_bar = "🟧" * turn_in_lap + "⬜" * (4 - turn_in_lap)
+
+    title = f"🏎️  F1 Race  ·  Lap {race.lap}/{race.total_laps}  ·  Turn {race.turn}/{race.max_turns}"
+
+    weather_line = "🌧️  **WET CONDITIONS — Intermediates recommended!**\n\n" if race.weather == "rain" else ""
+    commentary_block = commentary_engine.format_commentary(commentary_log[-3:]) if commentary_log else "> *Race underway…*"
+    desc = f"{weather_line}{commentary_block}"
 
     embed = discord.Embed(title=title, description=desc, color=0xE74C3C)
     embed.set_image(url=gif_url)
 
+    # Race progress
+    embed.add_field(
+        name="📊  Race Progress",
+        value=f"**Laps:** {lap_bar}  `{race.lap}/{race.total_laps}`\n**Turn:** {turn_bar}  `{turn_in_lap}/4`",
+        inline=False,
+    )
+
+    # Gap
     gap = race.gap
     if abs(gap) < 0.3:
         gap_str = "**⚡ SIDE BY SIDE — WHEEL TO WHEEL!**"
@@ -674,25 +689,31 @@ def build_auto_embed(
     else:
         gap_str = f"🏎️ **{p2_user.display_name}** leads by **{abs(gap):.2f}s**"
 
-    embed.add_field(name=f"{weather_icon}  Race Gap", value=gap_str, inline=False)
+    embed.add_field(name=f"{weather_icon}  Live Gap", value=gap_str, inline=False)
 
+    # Player 1 status
     p1_val = (
-        f"👤 **{race.p1_driver.name}** ({race.p1_driver.code})  ·  🏎️ **{race.p1_car.name}**\n"
+        f"👤 **{race.p1_driver.name}** `{race.p1_driver.code}`\n"
+        f"🏎️ {race.p1_car.name}\n\n"
         f"⛽ {_fuel_str(race.p1_fuel)}\n"
-        f"🔧 {_tire_str(race.p1_tire_wear, race.p1_tire_type)}"
+        f"🔧 {_tire_str(race.p1_tire_wear, race.p1_tire_type)}\n"
+        f"🔩 Pit stops: **{race.p1_pit_stops}**"
     )
     embed.add_field(name=f"{p1_pos_icon}  {p1_user.display_name}", value=p1_val, inline=True)
 
+    # Player 2 status
     p2_val = (
-        f"👤 **{race.p2_driver.name}** ({race.p2_driver.code})  ·  🏎️ **{race.p2_car.name}**\n"
+        f"👤 **{race.p2_driver.name}** `{race.p2_driver.code}`\n"
+        f"🏎️ {race.p2_car.name}\n\n"
         f"⛽ {_fuel_str(race.p2_fuel)}\n"
-        f"🔧 {_tire_str(race.p2_tire_wear, race.p2_tire_type)}"
+        f"🔧 {_tire_str(race.p2_tire_wear, race.p2_tire_type)}\n"
+        f"🔩 Pit stops: **{race.p2_pit_stops}**"
     )
     embed.add_field(name=f"{p2_pos_icon}  {p2_user.display_name}", value=p2_val, inline=True)
 
     if next_scenario_turn and race.turn < next_scenario_turn:
         turns_away = next_scenario_turn - race.turn
-        embed.set_footer(text=f"⚡ Auto-simulation  ·  Next decision in {turns_away} turn{'s' if turns_away != 1 else ''}")
+        embed.set_footer(text=f"⚡ Auto-simulation  ·  Next decision point in {turns_away} turn{'s' if turns_away != 1 else ''}")
     else:
         embed.set_footer(text="⚡ Auto-simulation — strategic decision incoming!")
     return embed
@@ -1974,27 +1995,109 @@ async def finish_auto_race(
         db.update_player_stats(loser_id,  {"status": "loss"})
 
         gap_text = f"{abs(race.gap):.3f}s"
+
+        # Determine dominant strategy for each player
+        def _strategy_label(history: list) -> str:
+            if not history:
+                return "Balanced"
+            pits   = history.count("pit_stop")
+            pushs  = history.count("accelerate")
+            lifts  = history.count("slow_down")
+            if pits >= 2:
+                return f"Aggressive Pit ({pits}x)"
+            if pushs > lifts:
+                return "Attacking"
+            if lifts > pushs:
+                return "Conservative"
+            return "Balanced"
+
+        p1_strategy = _strategy_label(race.choice_history.get("p1", []))
+        p2_strategy = _strategy_label(race.choice_history.get("p2", []))
+
+        # Tyre label at finish
+        def _tire_label(tire_type: str, wear: float) -> str:
+            t = {"soft": "Soft", "medium": "Medium", "hard": "Hard", "wet": "Wet"}.get(tire_type, tire_type.title())
+            health = 100 - wear
+            return f"{t} ({health:.0f}% left)"
+
+        # Weather summary
+        weather_events = [e for e in race.events_log if "Rain" in e or "Safety" in e or "DRS" in e]
+        weather_summary = ""
+        if any("Rain" in e for e in race.events_log):
+            weather_summary = "🌧️ Wet conditions hit mid-race"
+        if any("Safety" in e for e in race.events_log):
+            weather_summary += ("\n" if weather_summary else "") + "🚨 Safety car deployed"
+
         embed = discord.Embed(
             title="🏁  Race Complete!",
-            description=f"## 🥇 {winner_user.mention} wins!",
+            description=(
+                f"## 🥇  {winner_user.mention} takes the chequered flag!\n"
+                f"🥈  {loser_user.mention} finishes P2\n\n"
+                f"⏱️  Final gap: **{gap_text}**"
+            ),
             color=0xFFD700,
         )
-        embed.add_field(name="🥈 Runner-up", value=loser_user.mention, inline=True)
-        embed.add_field(name="⏱️ Gap",       value=gap_text,           inline=True)
+
+        # Driver & car recap
         embed.add_field(
-            name="🔧 Pit Stops",
-            value=f"{p1_user.display_name}: {race.p1_pit_stops}  ·  {p2_user.display_name}: {race.p2_pit_stops}",
-            inline=False,
+            name=f"🏎️  {p1_user.display_name}",
+            value=(
+                f"👤 {race.p1_driver.name} `{race.p1_driver.code}`\n"
+                f"🚗 {race.p1_car.name}\n"
+                f"🔩 Pit stops: **{race.p1_pit_stops}**\n"
+                f"🏁 Tyres: {_tire_label(race.p1_tire_type, race.p1_tire_wear)}\n"
+                f"⛽ Fuel left: **{race.p1_fuel:.0f}%**\n"
+                f"📋 Style: *{p1_strategy}*"
+            ),
+            inline=True,
         )
         embed.add_field(
-            name="💰 Rewards",
+            name=f"🏎️  {p2_user.display_name}",
+            value=(
+                f"👤 {race.p2_driver.name} `{race.p2_driver.code}`\n"
+                f"🚗 {race.p2_car.name}\n"
+                f"🔩 Pit stops: **{race.p2_pit_stops}**\n"
+                f"🏁 Tyres: {_tire_label(race.p2_tire_type, race.p2_tire_wear)}\n"
+                f"⛽ Fuel left: **{race.p2_fuel:.0f}%**\n"
+                f"📋 Style: *{p2_strategy}*"
+            ),
+            inline=True,
+        )
+
+        # Race key points
+        key_points = []
+        if abs(race.gap) < 0.5:
+            key_points.append("⚡ Incredibly close finish — decided by less than half a second!")
+        if race.p1_pit_stops == 0 or race.p2_pit_stops == 0:
+            no_pit = p1_user.display_name if race.p1_pit_stops == 0 else p2_user.display_name
+            key_points.append(f"🔥 {no_pit} completed the race on a single set of tyres!")
+        if race.p1_pit_stops >= 2 or race.p2_pit_stops >= 2:
+            multi = p1_user.display_name if race.p1_pit_stops >= 2 else p2_user.display_name
+            stops = race.p1_pit_stops if race.p1_pit_stops >= 2 else race.p2_pit_stops
+            key_points.append(f"🔧 {multi} ran an aggressive {stops}-stop strategy!")
+        if weather_summary:
+            key_points.append(weather_summary)
+        if race.p1_fuel < 15 or race.p2_fuel < 15:
+            low_fuel = p1_user.display_name if race.p1_fuel < race.p2_fuel else p2_user.display_name
+            key_points.append(f"⛽ {low_fuel} crossed the line on fumes — fuel management was critical!")
+        if not key_points:
+            key_points.append("🎯 A clean, controlled race from lights to flag.")
+
+        embed.add_field(
+            name="📰  Race Highlights",
+            value="\n".join(f"• {kp}" for kp in key_points),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="💰  Rewards",
             value=(
                 f"🥇 {winner_user.mention}: **+100 coins** ({winner_coins:,} total)\n"
                 f"🥈 {loser_user.mention}: **+25 coins** ({loser_coins:,} total)"
             ),
             inline=False,
         )
-        embed.set_footer(text="Earn more cards at /pack daily  ·  Upgrade with /shop")
+        embed.set_footer(text="Open a pack with /pack  ·  Upgrade your setup with /shop")
 
     try:
         await message.edit(embed=embed, view=None)
