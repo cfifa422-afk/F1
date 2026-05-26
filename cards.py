@@ -147,6 +147,59 @@ SELL_VALUES = {
     "legendary": 1500,
 }
 
+# ==================== TEAM ASSETS ====================
+
+TEAM_ASSETS = {
+    "legendary": [
+        {"name": "Adrian Newey",    "role": "Chief Designer",      "team": "Red Bull",   "effect": "aero",            "bonus": 0.15, "description": "+15% aerodynamics & cornering"},
+        {"name": "James Allison",   "role": "Technical Director",  "team": "Mercedes",   "effect": "acceleration",    "bonus": 0.12, "description": "+12% acceleration out of corners"},
+        {"name": "Ross Brawn",      "role": "Team Principal",      "team": "Brawn GP",   "effect": "pit_time",        "bonus": 0.80, "description": "-0.8s off every pit stop"},
+    ],
+    "epic": [
+        {"name": "Red Bull Pit Crew",       "role": "Pit Crew",         "team": "Red Bull",   "effect": "pit_time",        "bonus": 0.60, "description": "-0.6s off every pit stop"},
+        {"name": "Pirelli Engineers",       "role": "Tyre Specialists", "team": "Pirelli",    "effect": "tire_wear",       "bonus": 0.20, "description": "-20% tyre degradation rate"},
+        {"name": "Ferrari Strategy Team",   "role": "Strategists",      "team": "Ferrari",    "effect": "fuel_efficiency", "bonus": 0.12, "description": "+12% fuel efficiency per lap"},
+        {"name": "Mercedes Data Team",      "role": "Data Engineers",   "team": "Mercedes",   "effect": "acceleration",    "bonus": 0.10, "description": "+10% acceleration boost"},
+    ],
+    "rare": [
+        {"name": "McLaren Mechanics",       "role": "Mechanics",        "team": "McLaren",    "effect": "tire_wear",       "bonus": 0.10, "description": "-10% tyre degradation rate"},
+        {"name": "Aston Martin Aero Dept",  "role": "Aerodynamicists",  "team": "Aston Martin","effect": "aero",           "bonus": 0.08, "description": "+8% aerodynamics boost"},
+        {"name": "Williams Engineers",      "role": "Race Engineers",   "team": "Williams",   "effect": "fuel_efficiency", "bonus": 0.08, "description": "+8% fuel efficiency"},
+        {"name": "Alpine Pit Crew",         "role": "Pit Crew",         "team": "Alpine",     "effect": "pit_time",        "bonus": 0.30, "description": "-0.3s off every pit stop"},
+    ],
+    "common": [
+        {"name": "Haas Mechanics",          "role": "Mechanics",        "team": "Haas",       "effect": "tire_wear",       "bonus": 0.05, "description": "-5% tyre degradation rate"},
+        {"name": "Alfa Romeo Engineers",    "role": "Engineers",        "team": "Alfa Romeo", "effect": "fuel_efficiency", "bonus": 0.05, "description": "+5% fuel efficiency"},
+        {"name": "AlphaTauri Data Team",    "role": "Data Analysts",    "team": "RB",         "effect": "aero",            "bonus": 0.04, "description": "+4% aerodynamics boost"},
+    ],
+}
+
+TEAM_ASSET_EFFECT_LABELS = {
+    "aero":            "🏎️ Aerodynamics",
+    "acceleration":    "🚀 Acceleration",
+    "tire_wear":       "🔧 Tyre Wear",
+    "fuel_efficiency": "⛽ Fuel Efficiency",
+    "pit_time":        "⏱️ Pit Speed",
+}
+
+
+def generate_team_asset(rarity: str) -> Dict:
+    """Generate a random team asset card of the given rarity."""
+    pool = TEAM_ASSETS.get(rarity, TEAM_ASSETS["common"])
+    asset = random.choice(pool)
+    return {
+        "id": f"team_{asset['team'].replace(' ', '')}_{asset['name'].replace(' ', '_')}_{random.randint(10000, 99999)}",
+        "type": "team_asset",
+        "name": asset["name"],
+        "role": asset["role"],
+        "team": asset["team"],
+        "effect": asset["effect"],
+        "bonus": asset["bonus"],
+        "description": asset["description"],
+        "rarity": rarity,
+        "obtained_at": datetime.now().isoformat(),
+    }
+
 # ==================== WILD SPAWN ====================
 
 SPAWN_ODDS = {
@@ -156,10 +209,14 @@ SPAWN_ODDS = {
     "legendary": 0.03,
 }
 
+SPAWN_TEAM_CHANCE = 0.25  # 25% of wild spawns are team assets
+
 
 def generate_spawn_card() -> Dict:
-    """Generate a single wild card using spawn drop rates."""
+    """Generate a single wild card — 25% chance it's a team asset."""
     rarity = _roll_rarity(SPAWN_ODDS)
+    if random.random() < SPAWN_TEAM_CHANCE:
+        return generate_team_asset(rarity)
     return _generate_card(rarity)
 
 # ==================== RARITY DISPLAY ====================
@@ -237,18 +294,26 @@ def _generate_card(rarity: str) -> Dict:
 
 
 def generate_pack(pack_type: str) -> List[Dict]:
-    """Generate a list of cards for the given pack type."""
+    """Generate a list of cards for the given pack type.
+    Higher-tier packs include a higher chance of team asset cards.
+    """
     config = PACK_CONFIGS[pack_type]
     cards = []
 
-    # Guaranteed card first
+    TEAM_ASSET_CHANCE = {
+        "daily": 0.15, "weekly": 0.25,
+        "bronze": 0.20, "silver": 0.30, "gold": 0.35, "platinum": 0.45,
+    }.get(pack_type, 0.20)
+
     if config["guaranteed"]:
         cards.append(_generate_card(config["guaranteed"]))
 
-    # Fill remaining slots
     while len(cards) < config["card_count"]:
         rarity = _roll_rarity(config["odds"])
-        cards.append(_generate_card(rarity))
+        if random.random() < TEAM_ASSET_CHANCE:
+            cards.append(generate_team_asset(rarity))
+        else:
+            cards.append(_generate_card(rarity))
 
     return cards
 

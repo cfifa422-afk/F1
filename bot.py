@@ -7,9 +7,10 @@ from datetime import datetime
 from typing import Optional, Dict, List
 import random
 
-from database import Database
+from database import Database, UPGRADE_STATS, UPGRADE_COSTS, UPGRADE_MAX_LEVEL, UPGRADE_INFO
 import cards as card_module
 import f1_images
+import commentary as commentary_engine
 
 # ==================== BOT SETUP ====================
 
@@ -312,26 +313,40 @@ def give_starter_cards(player_id: str, username: str):
 
 
 def get_player_race_cards(player_id: str):
-    """Return (Car, Driver) objects to use in a race based on equipped + fallback."""
+    """Return (Car, Driver) objects to use in a race based on equipped + fallback.
+    Applies upgrade multipliers and equipped team-asset bonuses to Car stats.
+    """
     equipped = db.get_equipped(player_id)
     cards = db.get_player_cards(player_id)
 
-    # Car
     car_data = None
     if equipped.get("car_id"):
         car_data = db.get_card_by_id(player_id, equipped["car_id"])
     if not car_data and cards["cars"]:
         car_data = cards["cars"][0]
 
-    # Driver
     driver_data = None
     if equipped.get("driver_id"):
         driver_data = db.get_card_by_id(player_id, equipped["driver_id"])
     if not driver_data and cards["drivers"]:
         driver_data = cards["drivers"][0]
 
-    race_car = card_to_car(car_data) if car_data else Car("default", "Unknown Car", "Unknown", 350, "common")
+    race_car    = card_to_car(car_data)       if car_data    else Car("default", "Unknown Car", "Unknown", 350, "common")
     race_driver = card_to_driver(driver_data) if driver_data else Driver("default", "Unknown Driver", "UNK", 5.0, "common")
+
+    # Apply upgrade multipliers
+    mults        = db.get_upgrade_multipliers(player_id)
+    team_bonuses = db.get_team_bonuses(player_id)
+
+    race_car.top_speed = int(race_car.top_speed * mults["engine"])
+
+    stats = race_car.stats
+    stats["acceleration"] = stats.get("acceleration", 5.0) * mults["acceleration"] * (1.0 + team_bonuses.get("acceleration", 0.0))
+    stats["handling"]     = stats.get("handling", 5.0)     * mults["aero"]         * (1.0 + team_bonuses.get("aero", 0.0))
+    stats["tire_wear_rate"]   = stats.get("tire_wear_rate", 1.0) * mults["brakes"]  * max(0.2, 1.0 - team_bonuses.get("tire_wear", 0.0))
+    stats["fuel_efficiency"]  = stats.get("fuel_efficiency", 1.0) * max(0.2, 1.0 - team_bonuses.get("fuel_efficiency", 0.0))
+    stats["pit_time_bonus"]   = team_bonuses.get("pit_time", 0.0)
+
     return race_car, race_driver
 
 
@@ -392,6 +407,10 @@ def build_spawn_embed(card: Dict) -> discord.Embed:
     if card["type"] == "driver":
         card_name = f"{card['name']} ({card.get('code', '')})"
         card_icon = "👤"
+        team_line = card.get("team", "")
+    elif card["type"] == "team_asset":
+        card_name = card["name"]
+        card_icon = "🏗️"
         team_line = card.get("team", "")
     else:
         card_name = card["name"]
@@ -465,6 +484,16 @@ class PackOpeningView(discord.ui.View):
         if card["type"] == "driver":
             headline = f"👤  {card['name']} ({card['code']})"
             stats = f"**Team:** {card['team']}  ·  **Skill:** {card['skill']}/10"
+        elif card["type"] == "team_asset":
+            effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(card.get("effect", ""), card.get("effect", ""))
+            headline = f"🏗️  {card['name']}"
+            bonus = card.get("bonus", 0)
+            effect = card.get("effect", "")
+            bonus_str = f"-{bonus:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{bonus:.0%}"
+            stats = (
+                f"**Team:** {card['team']}  ·  **Role:** {card.get('role', '?')}\n"
+                f"{effect_label}: **{bonus_str}**  ·  {card.get('description', '')}"
+            )
         else:
             headline = f"🏎️  {card['name']}"
             stats = f"**Team:** {card['team']}  ·  **Top Speed:** {card['top_speed']} km/h"
@@ -494,6 +523,8 @@ class PackOpeningView(discord.ui.View):
             emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
             if card["type"] == "driver":
                 lines.append(f"{emoji}  **{card['name']}** ({card['code']})  —  {card['rarity'].title()}")
+            elif card["type"] == "team_asset":
+                lines.append(f"{emoji}  🏗️ **{card['name']}** ({card.get('role', '?')})  —  {card['rarity'].title()}")
             else:
                 lines.append(f"{emoji}  **{card['name']}**  —  {card['rarity'].title()}")
         embed = discord.Embed(
@@ -501,7 +532,7 @@ class PackOpeningView(discord.ui.View):
             description="\n".join(lines),
             color=0x2ECC71,
         )
-        embed.set_footer(text="All cards added to your collection!  Use /f1 equip to race.")
+        embed.set_footer(text="All cards added to your collection!  Use /team to equip staff · /f1 equip for race loadout.")
         return embed
 
     @discord.ui.button(label="✨  Reveal Card 1", style=discord.ButtonStyle.primary)
@@ -560,17 +591,21 @@ def build_live_embed(
     p1_locked: bool = False,
     p2_locked: bool = False,
     last_event: Optional[str] = None,
+    commentary_lines: Optional[List[str]] = None,
 ) -> discord.Embed:
     weather_icon = "🌧️" if race.weather == "rain" else "☀️"
     p1_pos_icon = "🥇" if race.p1_position == 1 else "🥈"
     p2_pos_icon = "🥇" if race.p2_position == 1 else "🥈"
 
     title = f"🏁  F1 Race  ·  Lap {race.lap}/{race.total_laps}  ·  Turn {race.turn + 1}/{race.max_turns}"
+
     desc_parts = []
-    if last_event:
+    if commentary_lines:
+        desc_parts.append(commentary_engine.format_commentary(commentary_lines[-3:]))
+    elif last_event:
         desc_parts.append(f"📡 **{last_event}**")
     if race.weather == "rain":
-        desc_parts.append("🌧️ **WET CONDITIONS** — Pit for wets!")
+        desc_parts.append("🌧️ *WET CONDITIONS — pit for wets!*")
 
     embed = discord.Embed(
         title=title,
@@ -1498,6 +1533,7 @@ async def run_live_race(
 ):
     """Background race loop — waits for both choices each turn, then processes."""
     TURN_TIMEOUT = 45
+    commentary_log: List[str] = []
 
     try:
         while race.turn < race.max_turns and race.lap <= race.total_laps:
@@ -1518,6 +1554,31 @@ async def run_live_race(
             result = race_engine.process_turn(race, p1_choice, p2_choice)
             event = result.get("event")
 
+            # Generate live commentary for this turn
+            try:
+                new_lines = commentary_engine.generate_turn_commentary(
+                    turn=race.turn,
+                    lap=race.lap,
+                    total_laps=race.total_laps,
+                    p1_name=p1_user.display_name,
+                    p2_name=p2_user.display_name,
+                    p1_choice=p1_choice,
+                    p2_choice=p2_choice,
+                    gap=race.gap,
+                    event=event,
+                    p1_fuel=race.p1_fuel,
+                    p2_fuel=race.p2_fuel,
+                    p1_tire_wear=race.p1_tire_wear,
+                    p2_tire_wear=race.p2_tire_wear,
+                    p1_tire_type=race.p1_tire_type,
+                    p2_tire_type=race.p2_tire_type,
+                    p1_leading=(race.p1_position == 1),
+                    weather=race.weather,
+                )
+                commentary_log.extend(new_lines)
+            except Exception:
+                pass
+
             if result.get("dnf") or result.get("race_finished") or race.lap > race.total_laps:
                 await finish_live_race(race, p1_user, p2_user, view, result, channel)
                 return
@@ -1525,7 +1586,9 @@ async def run_live_race(
             if view.message:
                 try:
                     embed = build_live_embed(
-                        race, p1_user, p2_user, view.gif_url, last_event=event
+                        race, p1_user, p2_user, view.gif_url,
+                        last_event=event,
+                        commentary_lines=commentary_log,
                     )
                     await view.message.edit(embed=embed, view=view)
                 except Exception:
@@ -2056,6 +2119,511 @@ class CollectionView(discord.ui.View):
     async def _on_quit(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
         await interaction.response.edit_message(content="Collection closed.", embed=None, view=None)
+
+
+# ==================== UPGRADE SYSTEM ====================
+
+def _upgrade_bar(level: int, max_level: int = 5) -> str:
+    filled = "█" * level
+    empty  = "░" * (max_level - level)
+    return f"`{filled}{empty}`"
+
+
+class UpgradeView(discord.ui.View):
+    def __init__(self, player_id: str):
+        super().__init__(timeout=120)
+        self.player_id = player_id
+        self.selected_stat: Optional[str] = None
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        upgrades = db.get_upgrades(self.player_id)
+        options = []
+        for stat in UPGRADE_STATS:
+            info   = UPGRADE_INFO[stat]
+            level  = upgrades.get(stat, 0)
+            if level < UPGRADE_MAX_LEVEL:
+                cost   = UPGRADE_COSTS[level]
+                label  = f"{info['emoji']} {info['label']}  Lv.{level}→{level+1}  · {cost:,} coins"
+                desc   = info["description"]
+            else:
+                label  = f"{info['emoji']} {info['label']}  MAX LEVEL"
+                desc   = "Already at peak performance!"
+                cost   = 0
+            options.append(
+                discord.SelectOption(
+                    label=label[:100],
+                    description=desc[:100],
+                    value=stat,
+                    default=(stat == self.selected_stat),
+                )
+            )
+        select = discord.ui.Select(
+            placeholder="Select a system to upgrade…",
+            options=options,
+            row=0,
+        )
+        select.callback = self._on_select
+        self.add_item(select)
+
+        if self.selected_stat:
+            level = db.get_upgrades(self.player_id).get(self.selected_stat, 0)
+            can_upgrade = level < UPGRADE_MAX_LEVEL
+            confirm_btn = discord.ui.Button(
+                label="✅ Confirm Upgrade",
+                style=discord.ButtonStyle.success if can_upgrade else discord.ButtonStyle.secondary,
+                disabled=not can_upgrade,
+                row=1,
+            )
+            confirm_btn.callback = self._on_confirm
+            self.add_item(confirm_btn)
+
+        close_btn = discord.ui.Button(label="✖ Close", style=discord.ButtonStyle.danger, row=1)
+        close_btn.callback = self._on_close
+        self.add_item(close_btn)
+
+    def _build_embed(self) -> discord.Embed:
+        upgrades  = db.get_upgrades(self.player_id)
+        coins     = db.get_coins(self.player_id)
+        player    = db.get_player(self.player_id)
+        car_name  = "No car equipped"
+        equipped  = db.get_equipped(self.player_id)
+        if equipped.get("car_id"):
+            car = db.get_card_by_id(self.player_id, equipped["car_id"])
+            if car:
+                car_name = f"{card_module.RARITY_EMOJIS.get(car['rarity'], '')} {car['name']} · {car['top_speed']} km/h"
+
+        lines = [f"**🏎️ {car_name}**\n"]
+        for stat in UPGRADE_STATS:
+            info  = UPGRADE_INFO[stat]
+            level = upgrades.get(stat, 0)
+            bar   = _upgrade_bar(level)
+            if level < UPGRADE_MAX_LEVEL:
+                cost_str = f"Next: **{UPGRADE_COSTS[level]:,}** coins"
+            else:
+                cost_str = "**MAX ✅**"
+            lines.append(f"{info['emoji']} **{info['label']}**  {bar}  Lv.{level}/5  ·  {cost_str}")
+
+        if self.selected_stat:
+            info  = UPGRADE_INFO[self.selected_stat]
+            level = upgrades.get(self.selected_stat, 0)
+            if level < UPGRADE_MAX_LEVEL:
+                cost = UPGRADE_COSTS[level]
+                lines.append(f"\n📦 *Selected:* **{info['label']}** Lv.{level}→{level+1} for **{cost:,} coins**")
+                if coins < cost:
+                    lines.append(f"⚠️ *Insufficient funds — you need **{cost - coins:,}** more coins.*")
+
+        embed = discord.Embed(
+            title="🔧  Car Upgrade Station",
+            description="\n".join(lines),
+            color=0xE67E22,
+        )
+        embed.add_field(name="💰 Your Balance", value=f"**{coins:,} coins**", inline=True)
+        total_levels = sum(upgrades.get(s, 0) for s in UPGRADE_STATS)
+        embed.add_field(name="📊 Total Upgrades", value=f"**{total_levels}** / {UPGRADE_MAX_LEVEL * len(UPGRADE_STATS)}", inline=True)
+        embed.set_footer(text="Upgrades persist permanently · Earn coins by racing")
+        return embed
+
+    async def _check(self, interaction: discord.Interaction) -> bool:
+        if str(interaction.user.id) != self.player_id:
+            await interaction.response.send_message("This isn't your upgrade menu!", ephemeral=True)
+            return False
+        return True
+
+    async def _on_select(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.selected_stat = interaction.data["values"][0]
+        self._build()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def _on_confirm(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        if not self.selected_stat:
+            await interaction.response.send_message("Select an upgrade first.", ephemeral=True)
+            return
+        success, result = db.upgrade_stat(self.player_id, self.selected_stat)
+        if success:
+            info  = UPGRADE_INFO[self.selected_stat]
+            level = result
+            embed = discord.Embed(
+                title="✅  Upgrade Complete!",
+                description=(
+                    f"{info['emoji']} **{info['label']}** upgraded to **Level {level}**!\n"
+                    f"{_upgrade_bar(level)}  ·  {info['description']}"
+                ),
+                color=0x2ECC71,
+            )
+            embed.set_footer(text="Your car will be stronger in your next race!")
+            self.selected_stat = None
+            self._build()
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            embed = discord.Embed(title="❌ Upgrade Failed", description=result, color=0xE74C3C)
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def _on_close(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        await interaction.response.edit_message(content="Upgrade menu closed.", embed=None, view=None)
+
+
+@bot.tree.command(name="upgrade", description="Upgrade your car's systems: engine, aero, brakes, acceleration, suspension")
+async def upgrade_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    give_starter_cards(player_id, interaction.user.name)
+    view = UpgradeView(player_id)
+    await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
+
+
+# ==================== TEAM MANAGEMENT ====================
+
+class TeamView(discord.ui.View):
+    """View/manage equipped team assets (staff cards)."""
+
+    MAX_EQUIPPED = 3
+
+    def __init__(self, player_id: str):
+        super().__init__(timeout=120)
+        self.player_id  = player_id
+        self.mode       = "view"
+        self._build()
+
+    def _build(self):
+        self.clear_items()
+        cards    = db.get_player_cards(self.player_id)
+        ta_cards = cards.get("team_assets", [])
+        equipped = db.get_equipped(self.player_id)
+        eq_ids   = equipped.get("team_assets", [])
+
+        unequipped = [c for c in ta_cards if c["id"] not in eq_ids]
+        equipped_cards = [c for c in ta_cards if c["id"] in eq_ids]
+
+        if self.mode == "equip" and unequipped:
+            options = []
+            for c in unequipped[:25]:
+                emoji = card_module.RARITY_EMOJIS.get(c["rarity"], "")
+                effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(c.get("effect", ""), c.get("effect", ""))
+                bonus = c.get("bonus", 0)
+                effect = c.get("effect", "")
+                bonus_str = f"-{bonus:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{bonus:.0%}"
+                options.append(discord.SelectOption(
+                    label=f"{emoji} {c['name']} ({c.get('role','?')}) — {c['rarity'].title()}"[:100],
+                    description=f"{effect_label}: {bonus_str}"[:100],
+                    value=c["id"],
+                ))
+            select = discord.ui.Select(placeholder="Choose a team asset to equip…", options=options, row=0)
+            select.callback = self._on_equip_select
+            self.add_item(select)
+
+        elif self.mode == "unequip" and equipped_cards:
+            options = []
+            for c in equipped_cards:
+                emoji = card_module.RARITY_EMOJIS.get(c["rarity"], "")
+                effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(c.get("effect", ""), c.get("effect", ""))
+                bonus = c.get("bonus", 0)
+                effect = c.get("effect", "")
+                bonus_str = f"-{bonus:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{bonus:.0%}"
+                options.append(discord.SelectOption(
+                    label=f"{emoji} {c['name']} ({c.get('role','?')}) — {c['rarity'].title()}"[:100],
+                    description=f"{effect_label}: {bonus_str}"[:100],
+                    value=c["id"],
+                ))
+            select = discord.ui.Select(placeholder="Choose a team asset to unequip…", options=options, row=0)
+            select.callback = self._on_unequip_select
+            self.add_item(select)
+
+        if len(eq_ids) < self.MAX_EQUIPPED and unequipped:
+            equip_btn = discord.ui.Button(label="➕ Equip Staff", style=discord.ButtonStyle.success, row=1)
+            equip_btn.callback = self._set_equip_mode
+            self.add_item(equip_btn)
+
+        if equipped_cards:
+            uneq_btn = discord.ui.Button(label="➖ Unequip Staff", style=discord.ButtonStyle.secondary, row=1)
+            uneq_btn.callback = self._set_unequip_mode
+            self.add_item(uneq_btn)
+
+        close_btn = discord.ui.Button(label="✖ Close", style=discord.ButtonStyle.danger, row=1)
+        close_btn.callback = self._on_close
+        self.add_item(close_btn)
+
+    def _build_embed(self) -> discord.Embed:
+        cards    = db.get_player_cards(self.player_id)
+        ta_cards = cards.get("team_assets", [])
+        equipped = db.get_equipped(self.player_id)
+        eq_ids   = equipped.get("team_assets", [])
+        bonuses  = db.get_team_bonuses(self.player_id)
+
+        eq_lines = []
+        for i in range(self.MAX_EQUIPPED):
+            if i < len(eq_ids):
+                card = next((c for c in ta_cards if c["id"] == eq_ids[i]), None)
+                if card:
+                    emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+                    effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(card.get("effect", ""), card.get("effect", ""))
+                    bonus = card.get("bonus", 0)
+                    effect = card.get("effect", "")
+                    bonus_str = f"-{bonus:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{bonus:.0%}"
+                    eq_lines.append(f"**[{i+1}]** {emoji} **{card['name']}** — {effect_label} {bonus_str}")
+                else:
+                    eq_lines.append(f"**[{i+1}]** *Slot available*")
+            else:
+                eq_lines.append(f"**[{i+1}]** *Slot available*")
+
+        bonus_parts = []
+        for effect, val in bonuses.items():
+            if val > 0:
+                label = card_module.TEAM_ASSET_EFFECT_LABELS.get(effect, effect)
+                bonus_str = f"-{val:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{val:.0%}"
+                bonus_parts.append(f"{label}: **{bonus_str}**")
+
+        desc = "**Active Slots**\n" + "\n".join(eq_lines)
+        if bonus_parts:
+            desc += "\n\n**Combined Race Bonuses**\n" + "\n".join(bonus_parts)
+
+        unequipped = [c for c in ta_cards if c["id"] not in eq_ids]
+
+        embed = discord.Embed(
+            title="🏗️  Team Management",
+            description=desc,
+            color=0x3498DB,
+        )
+        embed.add_field(name="📦 Total Staff Cards", value=f"**{len(ta_cards)}**  ·  {len(eq_ids)}/{self.MAX_EQUIPPED} equipped", inline=True)
+        embed.add_field(name="🔓 Available to Equip", value=f"**{len(unequipped)}**", inline=True)
+
+        if unequipped[:8]:
+            inv_lines = []
+            for c in unequipped[:8]:
+                emoji = card_module.RARITY_EMOJIS.get(c["rarity"], "")
+                effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(c.get("effect", ""), "")
+                inv_lines.append(f"{emoji} **{c['name']}**  —  {effect_label}")
+            if len(unequipped) > 8:
+                inv_lines.append(f"*…and {len(unequipped) - 8} more*")
+            embed.add_field(name="🗂️ Your Bench", value="\n".join(inv_lines), inline=False)
+
+        embed.set_footer(text="Up to 3 team assets can be equipped · Bonuses apply in every race")
+        return embed
+
+    async def _check(self, interaction: discord.Interaction) -> bool:
+        if str(interaction.user.id) != self.player_id:
+            await interaction.response.send_message("This isn't your team menu!", ephemeral=True)
+            return False
+        return True
+
+    async def _set_equip_mode(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.mode = "equip"
+        self._build()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def _set_unequip_mode(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.mode = "unequip"
+        self._build()
+        await interaction.response.edit_message(embed=self._build_embed(), view=self)
+
+    async def _on_equip_select(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        card_id = interaction.data["values"][0]
+        success, msg = db.equip_team_asset(self.player_id, card_id)
+        self.mode = "view"
+        self._build()
+        if success:
+            await interaction.response.edit_message(embed=self._build_embed(), view=self)
+        else:
+            await interaction.response.send_message(f"❌ {msg}", ephemeral=True)
+
+    async def _on_unequip_select(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        card_id = interaction.data["values"][0]
+        success, msg = db.unequip_team_asset(self.player_id, card_id)
+        self.mode = "view"
+        self._build()
+        if success:
+            await interaction.response.edit_message(embed=self._build_embed(), view=self)
+        else:
+            await interaction.response.send_message(f"❌ {msg}", ephemeral=True)
+
+    async def _on_close(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        await interaction.response.edit_message(content="Team menu closed.", embed=None, view=None)
+
+
+@bot.tree.command(name="team", description="Manage your team staff — equip pit crew, engineers, and strategists")
+async def team_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    give_starter_cards(player_id, interaction.user.name)
+    view = TeamView(player_id)
+    await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
+
+
+# ==================== GARAGE (SLASH) & PROFILE ====================
+
+@bot.tree.command(name="garage", description="View your full racing loadout — driver, car, team staff, and upgrades")
+async def garage_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    give_starter_cards(player_id, interaction.user.name)
+
+    cards    = db.get_player_cards(player_id)
+    equipped = db.get_equipped(player_id)
+    upgrades = db.get_upgrades(player_id)
+    bonuses  = db.get_team_bonuses(player_id)
+    coins    = db.get_coins(player_id)
+
+    # Equipped driver
+    driver_line = "*None equipped*"
+    if equipped.get("driver_id"):
+        d = db.get_card_by_id(player_id, equipped["driver_id"])
+        if d:
+            emoji = card_module.RARITY_EMOJIS.get(d["rarity"], "")
+            driver_line = f"{emoji} **{d['name']}** ({d['code']}) · Skill {d['skill']}/10 · {d['team']}"
+
+    # Equipped car
+    car_line = "*None equipped*"
+    if equipped.get("car_id"):
+        c = db.get_card_by_id(player_id, equipped["car_id"])
+        if c:
+            emoji = card_module.RARITY_EMOJIS.get(c["rarity"], "")
+            mults = db.get_upgrade_multipliers(player_id)
+            boosted_speed = int(c["top_speed"] * mults["engine"])
+            car_line = (
+                f"{emoji} **{c['name']}** · {c['team']}\n"
+                f"Top Speed: **{c['top_speed']}** → **{boosted_speed} km/h** (with upgrades)"
+            )
+
+    # Upgrades summary
+    upgrade_lines = []
+    for stat in UPGRADE_STATS:
+        info  = UPGRADE_INFO[stat]
+        level = upgrades.get(stat, 0)
+        upgrade_lines.append(f"{info['emoji']} {info['label']}  {_upgrade_bar(level)}  Lv.{level}/5")
+
+    # Team assets
+    ta_ids = equipped.get("team_assets", [])
+    ta_cards = cards.get("team_assets", [])
+    ta_lines = []
+    for i in range(3):
+        if i < len(ta_ids):
+            card = next((c for c in ta_cards if c["id"] == ta_ids[i]), None)
+            if card:
+                emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+                effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(card.get("effect", ""), "")
+                bonus = card.get("bonus", 0)
+                effect = card.get("effect", "")
+                bonus_str = f"-{bonus:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{bonus:.0%}"
+                ta_lines.append(f"{emoji} **{card['name']}** — {effect_label} {bonus_str}")
+            else:
+                ta_lines.append("*Empty slot*")
+        else:
+            ta_lines.append("*Empty slot*")
+
+    embed = discord.Embed(
+        title=f"🏎️  {interaction.user.display_name}'s Garage",
+        color=0x2C3E50,
+    )
+    embed.add_field(name="👤 Driver",       value=driver_line,           inline=False)
+    embed.add_field(name="🏎️ Car",          value=car_line,              inline=False)
+    embed.add_field(name="🔧 Upgrades",     value="\n".join(upgrade_lines), inline=True)
+    embed.add_field(name="🏗️ Team Staff",   value="\n".join(ta_lines),   inline=True)
+    embed.add_field(name="💰 Race Credits", value=f"**{coins:,}** coins", inline=False)
+    embed.set_footer(text="/f1 equip · /upgrade · /team to change loadout")
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="profile", description="View your F1 racing profile and full stats")
+@app_commands.describe(member="Player to view (leave blank for yourself)")
+async def profile_slash(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+    target   = member or interaction.user
+    player_id = str(target.id)
+    db.ensure_player(player_id, target.name)
+
+    player   = db.get_player(player_id)
+    stats    = player.get("stats", {})
+    coins    = db.get_coins(player_id)
+    cards    = db.get_player_cards(player_id)
+    upgrades = db.get_upgrades(player_id)
+    equipped = db.get_equipped(player_id)
+
+    wins     = stats.get("wins", 0)
+    losses   = stats.get("losses", 0)
+    dnf      = stats.get("dnf", 0)
+    total    = stats.get("total_races", 0)
+    win_rate = (wins / total * 100) if total > 0 else 0.0
+    rank     = stats.get("rank", "Bronze")
+    rp       = stats.get("ranking_points", 0)
+
+    RANK_EMOJIS = {"Bronze": "🥉", "Silver": "🥈", "Gold": "🥇", "Platinum": "💎", "Diamond": "💠"}
+    rank_emoji = RANK_EMOJIS.get(rank, "🏁")
+
+    # Collection counts
+    n_drivers = len(cards.get("drivers", []))
+    n_cars    = len(cards.get("cars", []))
+    n_team    = len(cards.get("team_assets", []))
+
+    # Equipped loadout quick view
+    driver_name = "None"
+    car_name    = "None"
+    if equipped.get("driver_id"):
+        d = db.get_card_by_id(player_id, equipped["driver_id"])
+        if d:
+            driver_name = f"{d['name']} ({d['code']})"
+    if equipped.get("car_id"):
+        c = db.get_card_by_id(player_id, equipped["car_id"])
+        if c:
+            car_name = c["name"]
+
+    # Total upgrade levels
+    total_upgrades = sum(upgrades.get(s, 0) for s in UPGRADE_STATS)
+    upgrade_str = " · ".join(
+        f"{UPGRADE_INFO[s]['emoji']}Lv.{upgrades.get(s,0)}" for s in UPGRADE_STATS
+    )
+
+    created = player.get("created_at", "")
+    try:
+        joined = datetime.fromisoformat(created).strftime("%b %d %Y")
+    except Exception:
+        joined = "Unknown"
+
+    embed = discord.Embed(
+        title=f"{rank_emoji}  {target.display_name}",
+        description=f"*F1 Card Racing Profile*",
+        color=0x1ABC9C,
+    )
+    embed.set_thumbnail(url=target.display_avatar.url)
+
+    embed.add_field(
+        name="🏆 Race Record",
+        value=(
+            f"🥇 Wins: **{wins}**  ·  🥈 Losses: **{losses}**  ·  ⚠️ DNF: **{dnf}**\n"
+            f"📊 Total Races: **{total}**  ·  Win Rate: **{win_rate:.1f}%**"
+        ),
+        inline=False,
+    )
+    embed.add_field(name=f"{rank_emoji} Rank", value=f"**{rank}**  ·  {rp} RP", inline=True)
+    embed.add_field(name="💰 Coins",           value=f"**{coins:,}**",              inline=True)
+
+    embed.add_field(
+        name="🎴 Collection",
+        value=(
+            f"👤 Drivers: **{n_drivers}**  ·  🏎️ Cars: **{n_cars}**  ·  🏗️ Staff: **{n_team}**\n"
+            f"Total: **{n_drivers + n_cars + n_team}** cards"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🏎️ Equipped",
+        value=f"👤 {driver_name}\n🏎️ {car_name}",
+        inline=True,
+    )
+    embed.add_field(
+        name=f"🔧 Upgrades ({total_upgrades}/{UPGRADE_MAX_LEVEL * len(UPGRADE_STATS)})",
+        value=upgrade_str,
+        inline=False,
+    )
+    embed.set_footer(text=f"Joined: {joined}  ·  Use /garage for full loadout")
+    await interaction.response.send_message(embed=embed)
 
 
 # ==================== MAIN ====================

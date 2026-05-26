@@ -24,6 +24,7 @@ DRIVER_IMAGES: Dict[str, str] = {
     "ZHO": "https://upload.wikimedia.org/wikipedia/commons/8/8b/Zhou_Guanyu_at_the_Melbourne_Walk_during_the_2026_Australian_Grand_Prix_%28028A7999%29.jpg",
     "SAR": "https://upload.wikimedia.org/wikipedia/commons/0/02/Logan_Sargeant_NYC_%28cropped%29.jpg",
     "PER": "https://upload.wikimedia.org/wikipedia/commons/5/55/2021_US_GP_driver_parade_%28cropped2%29.jpg",
+    "WEB": "https://upload.wikimedia.org/wikipedia/commons/d/d4/Mark_Webber_2013_Malaysia_FP2.jpg",
     # Retired Legends
     "SEN": "https://upload.wikimedia.org/wikipedia/commons/6/65/Ayrton_Senna_9_%28cropped%29.jpg",
     "MSC": "https://upload.wikimedia.org/wikipedia/commons/3/32/A%C3%A9cio_Neves%2C_Michael_Schumacher_e_Didi_%28Cropped%29.jpg",
@@ -41,26 +42,55 @@ DRIVER_IMAGES: Dict[str, str] = {
 # ==================== CAR IMAGES ====================
 
 CAR_IMAGES: Dict[str, str] = {
-    "Red Bull RB19": "https://upload.wikimedia.org/wikipedia/commons/7/79/FIA_F1_Austria_2023_Nr._1_%281%29.jpg",
-    "Red Bull RB18": "https://upload.wikimedia.org/wikipedia/commons/7/79/FIA_F1_Austria_2023_Nr._1_%281%29.jpg",
-    "Ferrari SF-23": "https://upload.wikimedia.org/wikipedia/commons/9/9f/FIA_F1_Austria_2023_Nr._55_%281%29.jpg",
-    "Ferrari SF-23+": "https://upload.wikimedia.org/wikipedia/commons/9/9f/FIA_F1_Austria_2023_Nr._55_%281%29.jpg",
-    "Ferrari F1-75": "https://upload.wikimedia.org/wikipedia/commons/d/de/Charles_Leclerc_2022.jpg",
-    "Ferrari F1-75+": "https://upload.wikimedia.org/wikipedia/commons/d/de/Charles_Leclerc_2022.jpg",
-    "McLaren MCL60": "https://upload.wikimedia.org/wikipedia/commons/2/2b/FIA_F1_Austria_2023_Nr._4_%282%29.jpg",
-    "McLaren MCL60S": "https://upload.wikimedia.org/wikipedia/commons/2/2b/FIA_F1_Austria_2023_Nr._4_%282%29.jpg",
-    "McLaren MCL36": "https://upload.wikimedia.org/wikipedia/commons/2/27/Lando_Norris_drives_the_McLaren_MCL36_during_the_2022_British_Grand_Prix..jpg",
-    "Aston Martin AMR23": "https://upload.wikimedia.org/wikipedia/commons/3/39/FIA_F1_Austria_2023_Nr._14_%281%29.jpg",
-    "Aston Martin AMR22": "https://upload.wikimedia.org/wikipedia/commons/3/39/FIA_F1_Austria_2023_Nr._14_%281%29.jpg",
-    "Alpine A523": "https://upload.wikimedia.org/wikipedia/commons/8/84/FIA_F1_Austria_2023_Nr._10_%282%29_%28cropped%29.jpg",
-    "Alpine A522": "https://upload.wikimedia.org/wikipedia/commons/8/84/FIA_F1_Austria_2023_Nr._10_%282%29_%28cropped%29.jpg",
-    "Mercedes AMG W14": "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
-    "Mercedes AMG W13": "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
-    "Williams FW45": "https://upload.wikimedia.org/wikipedia/commons/c/c4/FIA_F1_Austria_2023_Nr._23_%282%29.jpg",
-    "Williams FW44": "https://upload.wikimedia.org/wikipedia/commons/1/19/FIA_F1_Austria_2022_Nr._23_Albon.jpg",
-    "AlphaTauri AT04": "https://upload.wikimedia.org/wikipedia/commons/6/6f/FIA_F1_Austria_2023_Nr._21_%282%29.jpg",
-    "Haas VF-23": "https://upload.wikimedia.org/wikipedia/commons/4/4d/FIA_F1_Austria_2023_Nr._27_%282%29.jpg",
-    "Alfa Romeo C43": "https://upload.wikimedia.org/wikipedia/commons/2/27/FIA_F1_Austria_2023_Nr._24_%282%29.jpg",
+    "Red Bull RB19":        "https://upload.wikimedia.org/wikipedia/commons/7/79/FIA_F1_Austria_2023_Nr._1_%281%29.jpg",
+    "Red Bull RB18":        "https://upload.wikimedia.org/wikipedia/commons/7/79/FIA_F1_Austria_2023_Nr._1_%281%29.jpg",
+    "Ferrari SF-23":        "https://upload.wikimedia.org/wikipedia/commons/9/9f/FIA_F1_Austria_2023_Nr._55_%281%29.jpg",
+    "Ferrari SF-23+":       "https://upload.wikimedia.org/wikipedia/commons/9/9f/FIA_F1_Austria_2023_Nr._55_%281%29.jpg",
+    "Ferrari F1-75":        "https://upload.wikimedia.org/wikipedia/commons/d/de/Charles_Leclerc_2022.jpg",
+    "Ferrari F1-75+":       "https://upload.wikimedia.org/wikipedia/commons/d/de/Charles_Leclerc_2022.jpg",
+    "McLaren MCL60":        "https://upload.wikimedia.org/wikipedia/commons/2/2b/FIA_F1_Austria_2023_Nr._4_%282%29.jpg",
+    "McLaren MCL60S":       "https://upload.wikimedia.org/wikipedia/commons/2/2b/FIA_F1_Austria_2023_Nr._4_%282%29.jpg",
+    "McLaren MCL36":        "https://upload.wikimedia.org/wikipedia/commons/2/27/Lando_Norris_drives_the_McLaren_MCL36_during_the_2022_British_Grand_Prix..jpg",
+    "Aston Martin AMR23":   "https://upload.wikimedia.org/wikipedia/commons/3/39/FIA_F1_Austria_2023_Nr._14_%281%29.jpg",
+    "Aston Martin AMR22":   "https://upload.wikimedia.org/wikipedia/commons/3/39/FIA_F1_Austria_2023_Nr._14_%281%29.jpg",
+    "Alpine A523":          "https://upload.wikimedia.org/wikipedia/commons/8/84/FIA_F1_Austria_2023_Nr._10_%282%29_%28cropped%29.jpg",
+    "Alpine A522":          "https://upload.wikimedia.org/wikipedia/commons/8/84/FIA_F1_Austria_2023_Nr._10_%282%29_%28cropped%29.jpg",
+    "Mercedes AMG W14":     "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
+    "Mercedes AMG W13":     "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
+    "Williams FW45":        "https://upload.wikimedia.org/wikipedia/commons/c/c4/FIA_F1_Austria_2023_Nr._23_%282%29.jpg",
+    "Williams FW44":        "https://upload.wikimedia.org/wikipedia/commons/1/19/FIA_F1_Austria_2022_Nr._23_Albon.jpg",
+    "AlphaTauri AT04":      "https://upload.wikimedia.org/wikipedia/commons/6/6f/FIA_F1_Austria_2023_Nr._21_%282%29.jpg",
+    "Haas VF-23":           "https://upload.wikimedia.org/wikipedia/commons/4/4d/FIA_F1_Austria_2023_Nr._27_%282%29.jpg",
+    "Alfa Romeo C43":       "https://upload.wikimedia.org/wikipedia/commons/2/27/FIA_F1_Austria_2023_Nr._24_%282%29.jpg",
+}
+
+# ==================== TEAM ASSET IMAGES ====================
+# Photos of pit crews, engineers, strategists — sourced from Wikimedia Commons
+
+TEAM_ASSET_IMAGES: Dict[str, str] = {
+    # People
+    "Adrian Newey":         "https://upload.wikimedia.org/wikipedia/commons/3/37/Adrian_Newey_2019_Japan.jpg",
+    "James Allison":        "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
+    "Ross Brawn":           "https://upload.wikimedia.org/wikipedia/commons/d/de/Ross_Brawn_2012_Malaysia.jpg",
+    "Guenther Steiner":     "https://upload.wikimedia.org/wikipedia/commons/4/4d/FIA_F1_Austria_2023_Nr._27_%282%29.jpg",
+    "Toto Wolff":           "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
+    "Christian Horner":     "https://upload.wikimedia.org/wikipedia/commons/7/79/FIA_F1_Austria_2023_Nr._1_%281%29.jpg",
+    # Pit Crews (team-keyed to car photos as fallback)
+    "Red Bull Pit Crew":    "https://upload.wikimedia.org/wikipedia/commons/7/79/FIA_F1_Austria_2023_Nr._1_%281%29.jpg",
+    "Ferrari Pit Crew":     "https://upload.wikimedia.org/wikipedia/commons/9/9f/FIA_F1_Austria_2023_Nr._55_%281%29.jpg",
+    "Mercedes Pit Crew":    "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
+    "McLaren Pit Crew":     "https://upload.wikimedia.org/wikipedia/commons/2/2b/FIA_F1_Austria_2023_Nr._4_%282%29.jpg",
+    "Alpine Pit Crew":      "https://upload.wikimedia.org/wikipedia/commons/8/84/FIA_F1_Austria_2023_Nr._10_%282%29_%28cropped%29.jpg",
+    # Strategy / Engineering teams
+    "Pirelli Engineers":        "https://upload.wikimedia.org/wikipedia/commons/c/c4/FIA_F1_Austria_2023_Nr._23_%282%29.jpg",
+    "Ferrari Strategy Team":    "https://upload.wikimedia.org/wikipedia/commons/9/9f/FIA_F1_Austria_2023_Nr._55_%281%29.jpg",
+    "Mercedes Data Team":       "https://upload.wikimedia.org/wikipedia/commons/3/3f/FIA_F1_Austria_2023_Nr._44_%282%29.jpg",
+    "McLaren Mechanics":        "https://upload.wikimedia.org/wikipedia/commons/2/2b/FIA_F1_Austria_2023_Nr._4_%282%29.jpg",
+    "Aston Martin Aero Dept":   "https://upload.wikimedia.org/wikipedia/commons/3/39/FIA_F1_Austria_2023_Nr._14_%281%29.jpg",
+    "Williams Engineers":       "https://upload.wikimedia.org/wikipedia/commons/c/c4/FIA_F1_Austria_2023_Nr._23_%282%29.jpg",
+    "Haas Mechanics":           "https://upload.wikimedia.org/wikipedia/commons/4/4d/FIA_F1_Austria_2023_Nr._27_%282%29.jpg",
+    "Alfa Romeo Engineers":     "https://upload.wikimedia.org/wikipedia/commons/2/27/FIA_F1_Austria_2023_Nr._24_%282%29.jpg",
+    "AlphaTauri Data Team":     "https://upload.wikimedia.org/wikipedia/commons/6/6f/FIA_F1_Austria_2023_Nr._21_%282%29.jpg",
 }
 
 # ==================== LOOKUP HELPERS ====================
@@ -79,13 +109,25 @@ def get_car_image(name: str) -> Optional[str]:
     return None
 
 
+def get_team_asset_image(name: str) -> Optional[str]:
+    if name in TEAM_ASSET_IMAGES:
+        return TEAM_ASSET_IMAGES[name]
+    name_lower = name.lower()
+    for asset_name, url in TEAM_ASSET_IMAGES.items():
+        if any(word in name_lower for word in asset_name.lower().split()):
+            return url
+    return None
+
+
 def get_card_image(card: dict) -> Optional[str]:
-    """Return an image URL for a card dict (driver or car)."""
+    """Return an image URL for any card type (driver, car, team_asset)."""
     if card["type"] == "driver":
         return get_driver_image(card.get("code", ""))
-    else:
+    elif card["type"] == "car":
         return get_car_image(card.get("name", ""))
+    elif card["type"] == "team_asset":
+        return get_team_asset_image(card.get("name", ""))
+    return None
 
 
-# Total images available
-TOTAL_IMAGES = len(DRIVER_IMAGES) + len(set(CAR_IMAGES.values()))
+TOTAL_IMAGES = len(DRIVER_IMAGES) + len(set(CAR_IMAGES.values())) + len(TEAM_ASSET_IMAGES)

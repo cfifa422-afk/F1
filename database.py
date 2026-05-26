@@ -3,6 +3,20 @@ import os
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 
+# ==================== UPGRADE CONSTANTS ====================
+
+UPGRADE_STATS = ["engine", "aero", "brakes", "acceleration", "suspension"]
+UPGRADE_COSTS = [500, 1000, 2000, 4000, 8000]
+UPGRADE_MAX_LEVEL = 5
+
+UPGRADE_INFO = {
+    "engine":       {"emoji": "🔴", "label": "Engine",       "description": "Boosts top speed & raw power"},
+    "aero":         {"emoji": "🔵", "label": "Aerodynamics", "description": "Improves handling & cornering"},
+    "brakes":       {"emoji": "🟡", "label": "Brakes",       "description": "Reduces tyre wear under braking"},
+    "acceleration": {"emoji": "🟢", "label": "Acceleration", "description": "Faster out of corners"},
+    "suspension":   {"emoji": "⚪", "label": "Suspension",   "description": "Stability in all conditions"},
+}
+
 
 class Database:
     """JSON-based database for F1 racing bot"""
@@ -30,14 +44,17 @@ class Database:
     def _migrate_player(self, player: Dict) -> Dict:
         """Ensure old players have all new fields."""
         player.setdefault("coins", 0)
-        player.setdefault("equipped", {"driver_id": None, "car_id": None})
+        player.setdefault("equipped", {"driver_id": None, "car_id": None, "team_assets": []})
+        player["equipped"].setdefault("team_assets", [])
         player.setdefault("last_daily_pack", None)
         player.setdefault("last_weekly_pack", None)
         player.setdefault("achievements", [])
+        player.setdefault("upgrades", {s: 0 for s in UPGRADE_STATS})
         if "cards" not in player:
-            player["cards"] = {"drivers": [], "cars": []}
+            player["cards"] = {"drivers": [], "cars": [], "team_assets": []}
         player["cards"].setdefault("drivers", [])
         player["cards"].setdefault("cars", [])
+        player["cards"].setdefault("team_assets", [])
         return player
 
     # ==================== PLAYER ====================
@@ -55,7 +72,7 @@ class Database:
             "username": username,
             "created_at": datetime.now().isoformat(),
             "coins": 0,
-            "equipped": {"driver_id": None, "car_id": None},
+            "equipped": {"driver_id": None, "car_id": None, "team_assets": []},
             "last_daily_pack": None,
             "last_weekly_pack": None,
             "stats": {
@@ -67,8 +84,9 @@ class Database:
                 "ranking_points": 0,
                 "rank": "Bronze",
             },
-            "cards": {"drivers": [], "cars": []},
+            "cards": {"drivers": [], "cars": [], "team_assets": []},
             "achievements": [],
+            "upgrades": {s: 0 for s in UPGRADE_STATS},
         }
         self.data["players"][player_id] = player
         self._save_data()
@@ -183,17 +201,28 @@ class Database:
             player["cards"]["drivers"].append(card)
         elif card_type == "car":
             player["cards"]["cars"].append(card)
+        elif card_type == "team_asset":
+            player["cards"].setdefault("team_assets", []).append(card)
         self._save_data()
 
     def get_player_cards(self, player_id: str) -> Dict:
         player = self.get_player(player_id)
-        return player["cards"] if player else {"drivers": [], "cars": []}
+        if not player:
+            return {"drivers": [], "cars": [], "team_assets": []}
+        cards = player["cards"]
+        cards.setdefault("team_assets", [])
+        return cards
 
     def get_card_by_id(self, player_id: str, card_id: str) -> Optional[Dict]:
         player = self.get_player(player_id)
         if not player:
             return None
-        for card in player["cards"]["drivers"] + player["cards"]["cars"]:
+        all_cards = (
+            player["cards"]["drivers"]
+            + player["cards"]["cars"]
+            + player["cards"].get("team_assets", [])
+        )
+        for card in all_cards:
             if card["id"] == card_id:
                 return card
         return None
@@ -203,17 +232,19 @@ class Database:
         player = self.get_player(player_id)
         if not player:
             return False
-        for key in ("drivers", "cars"):
-            lst = player["cards"][key]
+        for key in ("drivers", "cars", "team_assets"):
+            lst = player["cards"].get(key, [])
             for i, card in enumerate(lst):
                 if card["id"] == card_id:
                     lst.pop(i)
-                    # Un-equip if this was equipped
                     equipped = player.get("equipped", {})
                     if equipped.get("driver_id") == card_id:
                         equipped["driver_id"] = None
                     if equipped.get("car_id") == card_id:
                         equipped["car_id"] = None
+                    ta = equipped.get("team_assets", [])
+                    if card_id in ta:
+                        ta.remove(card_id)
                     self._save_data()
                     return True
         return False
@@ -223,17 +254,109 @@ class Database:
         player = self.get_player(player_id)
         if not player:
             return False
-        key = "drivers" if card_type == "driver" else "cars"
-        return any(c["name"] == name for c in player["cards"][key])
+        key = {"driver": "drivers", "car": "cars", "team_asset": "team_assets"}.get(card_type, "drivers")
+        return any(c["name"] == name for c in player["cards"].get(key, []))
 
     def get_all_cards_sorted(self, player_id: str) -> List[Dict]:
-        """Return all cards (drivers + cars) sorted by obtained_at descending."""
+        """Return all cards (drivers + cars + team assets) sorted by obtained_at descending."""
         player = self.get_player(player_id)
         if not player:
             return []
-        all_cards = player["cards"]["drivers"] + player["cards"]["cars"]
+        all_cards = (
+            player["cards"]["drivers"]
+            + player["cards"]["cars"]
+            + player["cards"].get("team_assets", [])
+        )
         all_cards.sort(key=lambda c: c.get("obtained_at", ""), reverse=True)
         return all_cards
+
+    # ==================== UPGRADES ====================
+
+    def get_upgrades(self, player_id: str) -> Dict:
+        player = self.get_player(player_id)
+        if not player:
+            return {s: 0 for s in UPGRADE_STATS}
+        return player.setdefault("upgrades", {s: 0 for s in UPGRADE_STATS})
+
+    def upgrade_stat(self, player_id: str, stat: str):
+        """Attempt to upgrade a stat. Returns (success: bool, message: str)."""
+        if stat not in UPGRADE_STATS:
+            return False, "Unknown upgrade stat."
+        player = self.get_player(player_id)
+        if not player:
+            return False, "Player not found."
+        upgrades = player.setdefault("upgrades", {s: 0 for s in UPGRADE_STATS})
+        current = upgrades.get(stat, 0)
+        if current >= UPGRADE_MAX_LEVEL:
+            return False, "Already at maximum level (5/5)!"
+        cost = UPGRADE_COSTS[current]
+        if player.get("coins", 0) < cost:
+            short = cost - player.get("coins", 0)
+            return False, f"Need **{cost:,} coins** — short by **{short:,}**."
+        player["coins"] -= cost
+        upgrades[stat] = current + 1
+        self._save_data()
+        return True, current + 1
+
+    def get_upgrade_multipliers(self, player_id: str) -> Dict:
+        """Return stat multipliers based on upgrade levels."""
+        upgrades = self.get_upgrades(player_id)
+        return {
+            "engine":       1.0 + upgrades.get("engine", 0) * 0.06,
+            "aero":         1.0 + upgrades.get("aero", 0) * 0.06,
+            "brakes":       max(0.20, 1.0 - upgrades.get("brakes", 0) * 0.12),
+            "acceleration": 1.0 + upgrades.get("acceleration", 0) * 0.06,
+            "suspension":   1.0 + upgrades.get("suspension", 0) * 0.04,
+        }
+
+    # ==================== TEAM ASSETS ====================
+
+    def equip_team_asset(self, player_id: str, card_id: str) -> Tuple[bool, str]:
+        player = self.get_player(player_id)
+        if not player:
+            return False, "Player not found."
+        card = self.get_card_by_id(player_id, card_id)
+        if not card or card.get("type") != "team_asset":
+            return False, "Card not found or not a team asset."
+        equipped = player.setdefault("equipped", {})
+        ta = equipped.setdefault("team_assets", [])
+        if card_id in ta:
+            return False, "Already equipped."
+        if len(ta) >= 3:
+            return False, "Already have 3 team assets equipped. Unequip one first."
+        ta.append(card_id)
+        self._save_data()
+        return True, f"Equipped **{card['name']}**!"
+
+    def unequip_team_asset(self, player_id: str, card_id: str) -> Tuple[bool, str]:
+        player = self.get_player(player_id)
+        if not player:
+            return False, "Player not found."
+        ta = player.get("equipped", {}).get("team_assets", [])
+        if card_id not in ta:
+            return False, "Not currently equipped."
+        ta.remove(card_id)
+        self._save_data()
+        card = self.get_card_by_id(player_id, card_id)
+        name = card["name"] if card else "asset"
+        return True, f"Unequipped **{name}**."
+
+    def get_equipped_team_assets(self, player_id: str) -> List[Dict]:
+        """Return full card dicts for all equipped team assets."""
+        player = self.get_player(player_id)
+        if not player:
+            return []
+        ta_ids = player.get("equipped", {}).get("team_assets", [])
+        return [c for c in player["cards"].get("team_assets", []) if c["id"] in ta_ids]
+
+    def get_team_bonuses(self, player_id: str) -> Dict:
+        """Aggregate all bonuses from equipped team assets."""
+        bonuses = {"aero": 0.0, "acceleration": 0.0, "tire_wear": 0.0, "fuel_efficiency": 0.0, "pit_time": 0.0}
+        for asset in self.get_equipped_team_assets(player_id):
+            effect = asset.get("effect")
+            if effect in bonuses:
+                bonuses[effect] += asset.get("bonus", 0.0)
+        return bonuses
 
     # ==================== STATS ====================
 
