@@ -796,7 +796,29 @@ def build_challenge_embed(
     return embed
 
 
+# ==================== ACTIVITY TRACKING ====================
+
+# guild_id → timestamp of last human message seen
+_guild_last_message: Dict[str, float] = {}
+# guild_id → timestamp of last wild card spawn
+_guild_last_spawn: Dict[str, float] = {}
+
+SPAWN_INTERVAL_ACTIVE   = 15 * 60   # seconds — chat active in last 10 min
+SPAWN_INTERVAL_IDLE     = 20 * 60   # seconds — no recent chat
+ACTIVITY_WINDOW         = 10 * 60   # seconds — "active" if message within this window
+
+
 # ==================== BOT EVENTS ====================
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        await bot.process_commands(message)
+        return
+    if message.guild:
+        _guild_last_message[str(message.guild.id)] = message.created_at.timestamp()
+    await bot.process_commands(message)
+
 
 @bot.event
 async def on_ready():
@@ -809,7 +831,7 @@ async def on_ready():
     print(f"🏁 F1 Card Racing Bot is ready!")
     if not spawn_wild_card.is_running():
         spawn_wild_card.start()
-        print("🃏 Wild card spawn loop started (30 min interval)")
+        print("🃏 Wild card spawn loop started (20 min idle / 15 min active)")
 
 
 # ==================== WILD CARD SPAWN SYSTEM ====================
@@ -914,13 +936,27 @@ class SpawnView(discord.ui.View):
                 pass
 
 
-@tasks.loop(minutes=30)
+@tasks.loop(minutes=1)
 async def spawn_wild_card():
-    """Spawn a wild card in all configured channels across all guilds."""
+    """Check each guild and spawn a wild card when the interval has elapsed.
+
+    Interval is 15 min if chat was active in the last 10 min, otherwise 20 min.
+    """
+    now = __import__("time").time()
     for guild in bot.guilds:
-        channel_ids = db.get_spawn_channels(str(guild.id))
+        gid = str(guild.id)
+        channel_ids = db.get_spawn_channels(gid)
         if not channel_ids:
             continue
+
+        last_msg = _guild_last_message.get(gid, 0)
+        is_active = (now - last_msg) < ACTIVITY_WINDOW
+        interval = SPAWN_INTERVAL_ACTIVE if is_active else SPAWN_INTERVAL_IDLE
+
+        last_spawn = _guild_last_spawn.get(gid, 0)
+        if (now - last_spawn) < interval:
+            continue
+
         channel_id = random.choice(channel_ids)
         channel = guild.get_channel(int(channel_id))
         if not channel:
@@ -931,7 +967,9 @@ async def spawn_wild_card():
             view = SpawnView(card)
             msg = await channel.send(embed=embed, view=view)
             view.message = msg
-            print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name})")
+            _guild_last_spawn[gid] = now
+            mode = "active" if is_active else "idle"
+            print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name}) [{mode} — {interval//60}min interval]")
         except Exception as e:
             print(f"⚠️ Failed to spawn card in guild {guild.id}: {e}")
 
@@ -1684,21 +1722,41 @@ RAIN_SCENARIO_OVERRIDE = {
 
 SCENARIO_TURNS = sorted(RACE_SCENARIOS.keys())
 
-# Turns where the reaction challenge fires (must not overlap with SCENARIO_TURNS)
-REACTION_TURNS = [2, 5, 8]
+# Turns where the reaction challenge fires (must not overlap with SCENARIO_TURNS: 3,6,9,11)
+REACTION_TURNS = [1, 2, 4, 5, 7, 8, 10]
+
+
+REACTION_DIRECTIONS = ["left", "right", "up", "down"]
+REACTION_LABELS = {
+    "left":  "◀  LEFT",
+    "right": "RIGHT  ▶",
+    "up":    "▲  UP",
+    "down":  "▼  DOWN",
+}
 
 
 class ReactionChallengeView(discord.ui.View):
-    """A timed ◀️/▶️ button challenge that appears mid-race."""
+    """A timed 4-direction button challenge that appears mid-race."""
 
     def __init__(self, direction: str, p1_user: discord.Member, p2_user: discord.Member):
-        super().__init__(timeout=6.0)
-        self.direction = direction          # "left" or "right"
+        super().__init__(timeout=4.0)
+        self.direction = direction
         self.p1_user   = p1_user
         self.p2_user   = p2_user
-        self.clicks: Dict[str, tuple] = {}  # uid → (correct: bool, elapsed: float)
+        self.clicks: Dict[str, tuple] = {}
         self.done      = asyncio.Event()
-        self._start    = None               # set when the view is first interacted with
+        self._start    = None
+
+        for d in REACTION_DIRECTIONS:
+            btn = discord.ui.Button(
+                label=REACTION_LABELS[d],
+                style=discord.ButtonStyle.primary,
+                row=0,
+            )
+            async def _cb(interaction: discord.Interaction, _d=d):
+                await self._handle(interaction, _d)
+            btn.callback = _cb
+            self.add_item(btn)
 
     async def _handle(self, interaction: discord.Interaction, clicked: str):
         if interaction.user.id not in (self.p1_user.id, self.p2_user.id):
@@ -1724,14 +1782,6 @@ class ReactionChallengeView(discord.ui.View):
         if len(self.clicks) >= 2:
             self.done.set()
             self.stop()
-
-    @discord.ui.button(label="◀  LEFT", style=discord.ButtonStyle.primary)
-    async def left_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "left")
-
-    @discord.ui.button(label="RIGHT  ▶", style=discord.ButtonStyle.primary)
-    async def right_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle(interaction, "right")
 
 
 class ScenarioView(discord.ui.View):
@@ -1990,19 +2040,19 @@ async def run_auto_race(
             # ── REACTION CHALLENGE ────────────────────────────────
             if turn_num in REACTION_TURNS and channel:
                 await asyncio.sleep(1.2)
-                direction = random.choice(["left", "right"])
-                dir_label = "◀  LEFT" if direction == "left" else "RIGHT  ▶"
+                direction = random.choice(REACTION_DIRECTIONS)
+                dir_label = REACTION_LABELS[direction]
 
                 rv = ReactionChallengeView(direction, p1_user, p2_user)
                 react_embed = discord.Embed(
                     title="⚡  REACTION CHALLENGE!",
                     description=(
-                        f"## Click  **{dir_label}**  as fast as you can!\n\n"
-                        f"First to hit the correct button gains a race advantage!"
+                        f"## Hit  **{dir_label}**  as fast as you can!\n\n"
+                        f"4 directions — pick the right one first to gain a race advantage!"
                     ),
                     color=0xF1C40F,
                 )
-                react_embed.set_footer(text="⏱️  6 seconds — GO!")
+                react_embed.set_footer(text="⏱️  4 seconds — GO!")
 
                 react_msg = None
                 try:
@@ -2011,7 +2061,7 @@ async def run_auto_race(
                     pass
 
                 try:
-                    await asyncio.wait_for(rv.done.wait(), timeout=6.0)
+                    await asyncio.wait_for(rv.done.wait(), timeout=4.0)
                 except asyncio.TimeoutError:
                     rv.stop()
 
