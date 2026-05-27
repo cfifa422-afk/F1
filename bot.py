@@ -1423,9 +1423,17 @@ class MultiSellView(discord.ui.View):
         super().__init__(timeout=180)
         self.player_id = player_id
         self.user = user
-        # Sort: common first (most likely to sell), then by rarity ascending
+        # Starter cards are protected — cannot be sold
         RARITY_ORDER = {"common": 0, "rare": 1, "epic": 2, "legendary": 3}
-        self.all_cards = sorted(all_cards, key=lambda c: RARITY_ORDER.get(c["rarity"], 0))
+        self.starter_count = sum(
+            1 for c in all_cards
+            if c["id"].startswith("starter_driver_") or c["id"].startswith("starter_car_")
+        )
+        sellable = [
+            c for c in all_cards
+            if not c["id"].startswith("starter_driver_") and not c["id"].startswith("starter_car_")
+        ]
+        self.all_cards = sorted(sellable, key=lambda c: RARITY_ORDER.get(c["rarity"], 0))
         self.page = 0
         self.total_pages = max(1, (len(self.all_cards) + self.PER_PAGE - 1) // self.PER_PAGE)
         self.selected_ids: set = set()
@@ -1530,6 +1538,12 @@ class MultiSellView(discord.ui.View):
             description="\n".join(lines),
             color=0xF39C12,
         )
+        if self.starter_count:
+            embed.add_field(
+                name="🔒 Starter Cards Protected",
+                value=f"Your **{self.starter_count}** starter card(s) cannot be sold — they are your base equipment.",
+                inline=False,
+            )
         equipped = db.get_equipped(self.player_id)
         eq_ids = {equipped.get("driver_id"), equipped.get("car_id")} | set(equipped.get("team_assets", []))
         equipped_selected = [c for c in self.all_cards if c["id"] in self.selected_ids and c["id"] in eq_ids]
@@ -1539,7 +1553,7 @@ class MultiSellView(discord.ui.View):
                 value=f"**{len(equipped_selected)}** selected card(s) are currently equipped — selling them will unequip.",
                 inline=False,
             )
-        embed.set_footer(text=f"{len(self.all_cards)} cards total · Page {self.page+1}/{self.total_pages}")
+        embed.set_footer(text=f"{len(self.all_cards)} sellable cards · Page {self.page+1}/{self.total_pages}")
         return embed
 
     async def _check(self, interaction: discord.Interaction) -> bool:
@@ -1639,6 +1653,268 @@ async def f1_sell(interaction: discord.Interaction):
 
     view = MultiSellView(player_id, all_cards, interaction.user)
     await interaction.response.send_message(embed=view._build_embed(), view=view, ephemeral=True)
+
+
+# ==================== TRADING SYSTEM ====================
+
+# trade_offer_id → {"offerer_id", "target_id", "offer_card", "request_card", "channel_id"}
+_pending_trades: Dict[str, Dict] = {}
+
+
+def _is_starter(card_id: str) -> bool:
+    return card_id.startswith("starter_driver_") or card_id.startswith("starter_car_")
+
+
+def _card_label(card: Dict) -> str:
+    rarity = card.get("rarity", "common").title()
+    emoji  = card_module.RARITY_EMOJIS.get(card.get("rarity", "common"), "")
+    if card.get("type") == "driver":
+        return f"{emoji} {card['name']} ({card.get('code','?')}) — {rarity}"
+    elif card.get("type") == "team_asset":
+        return f"🏗️ {card['name']} ({card.get('role','?')}) — {rarity}"
+    return f"{emoji} {card['name']} — {rarity}"
+
+
+class TradeOfferSelectView(discord.ui.View):
+    """Step 1 — offerer picks which of their cards to put up."""
+
+    def __init__(self, offerer: discord.Member, target: discord.Member, cards: List[Dict]):
+        super().__init__(timeout=120)
+        self.offerer = offerer
+        self.target  = target
+        self.chosen_card: Optional[Dict] = None
+
+        tradeable = [c for c in cards if not _is_starter(c["id"])][:25]
+        if not tradeable:
+            return
+
+        options = []
+        for c in tradeable:
+            price = card_module.SELL_VALUES.get(c.get("rarity", "common"), 0)
+            options.append(discord.SelectOption(
+                label=f"{c['name']}"[:100],
+                value=c["id"],
+                description=f"{c.get('rarity','').title()} · worth {price:,} coins"[:100],
+                emoji=card_module.RARITY_EMOJIS.get(c.get("rarity", "common"), None),
+            ))
+
+        sel = discord.ui.Select(placeholder="Choose a card to offer...", options=options, row=0)
+        sel.callback = self._on_select
+        self.add_item(sel)
+
+        cancel = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+        cancel.callback = self._on_cancel
+        self.add_item(cancel)
+
+    async def _on_select(self, interaction: discord.Interaction):
+        if interaction.user.id != self.offerer.id:
+            await interaction.response.send_message("This isn't your trade!", ephemeral=True)
+            return
+        card_id = interaction.data["values"][0]
+        card = db.get_card_by_id(str(self.offerer.id), card_id)
+        if not card:
+            await interaction.response.send_message("Card not found.", ephemeral=True)
+            return
+        self.chosen_card = card
+        self.stop()
+
+        embed = discord.Embed(
+            title="📬  Trade Offer Sent",
+            description=(
+                f"You offered **{_card_label(card)}** to {self.target.mention}.\n\n"
+                f"Waiting for them to respond..."
+            ),
+            color=0x3498DB,
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+        # Post the offer publicly so target can respond
+        trade_id = f"{self.offerer.id}_{self.target.id}"
+        _pending_trades[trade_id] = {
+            "offerer_id": str(self.offerer.id),
+            "target_id":  str(self.target.id),
+            "offer_card": card,
+        }
+        offer_embed = discord.Embed(
+            title="🔄  Trade Offer",
+            description=(
+                f"{self.offerer.mention} wants to trade with {self.target.mention}!\n\n"
+                f"**Offering:** {_card_label(card)}\n\n"
+                f"{self.target.mention} — pick a card to give in return, or decline."
+            ),
+            color=0xF39C12,
+        )
+        target_cards = db.get_all_cards_sorted(str(self.target.id))
+        respond_view = TradeRespondView(self.offerer, self.target, card, target_cards, trade_id)
+        await interaction.channel.send(
+            content=self.target.mention,
+            embed=offer_embed,
+            view=respond_view,
+        )
+
+    async def _on_cancel(self, interaction: discord.Interaction):
+        if interaction.user.id != self.offerer.id:
+            await interaction.response.defer()
+            return
+        await interaction.response.edit_message(content="Trade cancelled.", embed=None, view=None)
+        self.stop()
+
+
+class TradeRespondView(discord.ui.View):
+    """Step 2 — target picks what they offer back, or declines."""
+
+    def __init__(
+        self,
+        offerer: discord.Member,
+        target: discord.Member,
+        offered_card: Dict,
+        target_cards: List[Dict],
+        trade_id: str,
+    ):
+        super().__init__(timeout=120)
+        self.offerer      = offerer
+        self.target       = target
+        self.offered_card = offered_card
+        self.trade_id     = trade_id
+
+        tradeable = [c for c in target_cards if not _is_starter(c["id"])][:25]
+        if tradeable:
+            options = []
+            for c in tradeable:
+                price = card_module.SELL_VALUES.get(c.get("rarity", "common"), 0)
+                options.append(discord.SelectOption(
+                    label=f"{c['name']}"[:100],
+                    value=c["id"],
+                    description=f"{c.get('rarity','').title()} · worth {price:,} coins"[:100],
+                    emoji=card_module.RARITY_EMOJIS.get(c.get("rarity", "common"), None),
+                ))
+            sel = discord.ui.Select(placeholder="Choose a card to give in return...", options=options, row=0)
+            sel.callback = self._on_accept
+            self.add_item(sel)
+
+        decline = discord.ui.Button(label="❌ Decline", style=discord.ButtonStyle.danger, row=1)
+        decline.callback = self._on_decline
+        self.add_item(decline)
+
+    async def _on_accept(self, interaction: discord.Interaction):
+        if interaction.user.id != self.target.id:
+            await interaction.response.send_message("This trade isn't for you!", ephemeral=True)
+            return
+        if self.trade_id not in _pending_trades:
+            await interaction.response.send_message("This trade has already expired.", ephemeral=True)
+            self.stop()
+            return
+
+        card_id = interaction.data["values"][0]
+        return_card = db.get_card_by_id(str(self.target.id), card_id)
+        if not return_card:
+            await interaction.response.send_message("That card wasn't found in your collection.", ephemeral=True)
+            return
+
+        trade = _pending_trades.pop(self.trade_id, None)
+        if not trade:
+            await interaction.response.send_message("Trade expired.", ephemeral=True)
+            self.stop()
+            return
+
+        offerer_id = trade["offerer_id"]
+        target_id  = trade["target_id"]
+        offer_card = trade["offer_card"]
+
+        # Verify both cards still exist
+        if not db.get_card_by_id(offerer_id, offer_card["id"]):
+            await interaction.response.send_message("The offered card no longer exists.", ephemeral=True)
+            self.stop()
+            return
+
+        # Execute swap: remove from each, add to the other
+        db.remove_card(offerer_id, offer_card["id"])
+        db.remove_card(target_id,  return_card["id"])
+
+        # Strip timestamps so add_card_to_player sets fresh ones
+        offer_copy  = {k: v for k, v in offer_card.items()  if k not in ("obtained_at", "caught_at")}
+        return_copy = {k: v for k, v in return_card.items() if k not in ("obtained_at", "caught_at")}
+
+        db.add_card_to_player(target_id,  offer_copy,  offer_card.get("type",  "driver"))
+        db.add_card_to_player(offerer_id, return_copy, return_card.get("type", "driver"))
+
+        self.stop()
+        embed = discord.Embed(
+            title="✅  Trade Complete!",
+            description=(
+                f"{self.offerer.mention} received **{_card_label(return_card)}**\n"
+                f"{self.target.mention} received **{_card_label(offer_card)}**"
+            ),
+            color=0x2ECC71,
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+    async def _on_decline(self, interaction: discord.Interaction):
+        if interaction.user.id != self.target.id:
+            await interaction.response.send_message("This trade isn't for you!", ephemeral=True)
+            return
+        _pending_trades.pop(self.trade_id, None)
+        self.stop()
+        embed = discord.Embed(
+            title="❌  Trade Declined",
+            description=f"{self.target.display_name} declined the trade offer.",
+            color=0xE74C3C,
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+
+
+@f1_group.command(name="trade", description="Offer one of your cards to another player in exchange for one of theirs")
+@discord.app_commands.describe(player="The player you want to trade with")
+async def f1_trade(interaction: discord.Interaction, player: discord.Member):
+    if player.id == interaction.user.id:
+        await interaction.response.send_message("You can't trade with yourself!", ephemeral=True)
+        return
+    if player.bot:
+        await interaction.response.send_message("You can't trade with a bot!", ephemeral=True)
+        return
+
+    offerer_id = str(interaction.user.id)
+    target_id  = str(player.id)
+    db.ensure_player(offerer_id, interaction.user.name)
+    give_starter_cards(offerer_id, interaction.user.name)
+
+    if not db.player_exists(target_id):
+        await interaction.response.send_message(
+            f"{player.display_name} hasn't started playing yet — they need to use `/f1 profile` first.",
+            ephemeral=True,
+        )
+        return
+
+    trade_id = f"{offerer_id}_{target_id}"
+    if trade_id in _pending_trades:
+        await interaction.response.send_message(
+            "You already have a pending trade with that player. Wait for it to expire or be resolved.",
+            ephemeral=True,
+        )
+        return
+
+    all_cards = db.get_all_cards_sorted(offerer_id)
+    tradeable  = [c for c in all_cards if not _is_starter(c["id"])]
+
+    if not tradeable:
+        await interaction.response.send_message(
+            "You have no tradeable cards. Starter cards are protected and cannot be traded.\n"
+            "Open packs with `/pack daily` or `/pack weekly` to get more cards!",
+            ephemeral=True,
+        )
+        return
+
+    embed = discord.Embed(
+        title="🔄  Start a Trade",
+        description=(
+            f"Trading with **{player.display_name}**.\n\n"
+            "Select one of your cards to offer from the dropdown below.\n"
+            "Starter cards are protected and cannot be traded."
+        ),
+        color=0x3498DB,
+    )
+    view = TradeOfferSelectView(interaction.user, player, tradeable)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # ==================== REGISTER COMMAND GROUPS ====================
@@ -1747,17 +2023,6 @@ class ReactionChallengeView(discord.ui.View):
         self.done      = asyncio.Event()
         self._start    = None
 
-        for d in REACTION_DIRECTIONS:
-            btn = discord.ui.Button(
-                label=REACTION_LABELS[d],
-                style=discord.ButtonStyle.primary,
-                row=0,
-            )
-            async def _cb(interaction: discord.Interaction, _d=d):
-                await self._handle(interaction, _d)
-            btn.callback = _cb
-            self.add_item(btn)
-
     async def _handle(self, interaction: discord.Interaction, clicked: str):
         if interaction.user.id not in (self.p1_user.id, self.p2_user.id):
             await interaction.response.send_message("❌ You're not in this race!", ephemeral=True)
@@ -1782,6 +2047,22 @@ class ReactionChallengeView(discord.ui.View):
         if len(self.clicks) >= 2:
             self.done.set()
             self.stop()
+
+    @discord.ui.button(label="◀  LEFT", style=discord.ButtonStyle.primary, row=0)
+    async def btn_left(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "left")
+
+    @discord.ui.button(label="RIGHT  ▶", style=discord.ButtonStyle.primary, row=0)
+    async def btn_right(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "right")
+
+    @discord.ui.button(label="▲  UP", style=discord.ButtonStyle.primary, row=0)
+    async def btn_up(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "up")
+
+    @discord.ui.button(label="▼  DOWN", style=discord.ButtonStyle.primary, row=0)
+    async def btn_down(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "down")
 
 
 class ScenarioView(discord.ui.View):
