@@ -350,6 +350,28 @@ def get_player_race_cards(player_id: str):
     return race_car, race_driver
 
 
+def format_card_footer(card: Dict) -> str:
+    """Return a footer string showing the card's ID and caught date with relative time."""
+    card_id = card.get("id", "?").upper()
+    caught_raw = card.get("caught_at") or card.get("obtained_at")
+    if caught_raw:
+        try:
+            caught_dt = datetime.fromisoformat(str(caught_raw))
+            delta = datetime.now() - caught_dt
+            if delta.days == 0:
+                hours = delta.seconds // 3600
+                rel = f"{hours} hour{'s' if hours != 1 else ''} ago" if hours > 0 else "just now"
+            elif delta.days == 1:
+                rel = "1 day ago"
+            else:
+                rel = f"{delta.days} days ago"
+            caught_str = caught_dt.strftime("%b %d, %Y %I:%M %p")
+            return f"ID: #{card_id}  ·  Caught on {caught_str} ({rel})"
+        except Exception:
+            pass
+    return f"ID: #{card_id}"
+
+
 def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: str) -> discord.Embed:
     """Build a rich single-card embed with full-size photo."""
     config = card_module.PACK_CONFIGS[pack_type]
@@ -393,7 +415,7 @@ def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: 
     if img:
         embed.set_image(url=img)
 
-    embed.set_footer(text="Added to collection! Use /f1 equip to race with it.")
+    embed.set_footer(text=format_card_footer(card))
     return embed
 
 
@@ -834,9 +856,10 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
                 if self.card["type"] == "driver"
                 else self.card["name"]
             )
+            card_display_id = f"#{self.card.get('id', '?').upper()}"
             await interaction.response.edit_message(view=self.spawn_view)
             await interaction.followup.send(
-                f"{interaction.user.mention} caught **{display}**!  ·  {rarity_label}\n"
+                f"{interaction.user.mention} You caught **{display}**! ({card_display_id},  {rarity_label})\n"
                 f"Added to your collection. Use `/f1 equip` to race with it."
             )
             self.spawn_view.stop()
@@ -2625,6 +2648,7 @@ class CollectionView(discord.ui.View):
         if img:
             detail.set_image(url=img)
 
+        detail.set_footer(text=format_card_footer(card))
         await interaction.response.send_message(embed=detail)
 
     async def _on_quit(self, interaction: discord.Interaction):

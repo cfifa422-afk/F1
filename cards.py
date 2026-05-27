@@ -188,7 +188,7 @@ def generate_team_asset(rarity: str) -> Dict:
     pool = TEAM_ASSETS.get(rarity, TEAM_ASSETS["common"])
     asset = random.choice(pool)
     return {
-        "id": f"team_{asset['team'].replace(' ', '')}_{asset['name'].replace(' ', '_')}_{random.randint(10000, 99999)}",
+        "id": f"{random.randint(0, 0xFFFFFFF):07X}",
         "type": "team_asset",
         "name": asset["name"],
         "role": asset["role"],
@@ -264,7 +264,7 @@ def _generate_card(rarity: str) -> Dict:
         driver = random.choice(pool)
         perks = [random.choice(list(PERKS.keys()))] if random.random() < 0.30 else []
         return {
-            "id": f"driver_{driver['code']}_{random.randint(10000, 99999)}",
+            "id": f"{random.randint(0, 0xFFFFFFF):07X}",
             "type": "driver",
             "name": driver["name"],
             "code": driver["code"],
@@ -281,7 +281,7 @@ def _generate_card(rarity: str) -> Dict:
         car = random.choice(pool)
         perks = [random.choice(list(PERKS.keys()))] if random.random() < 0.25 else []
         return {
-            "id": f"car_{car['team'].replace(' ', '')}_{random.randint(10000, 99999)}",
+            "id": f"{random.randint(0, 0xFFFFFFF):07X}",
             "type": "car",
             "name": car["name"],
             "team": car["team"],

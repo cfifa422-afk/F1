@@ -196,7 +196,9 @@ class Database:
         player = self.get_player(player_id)
         if not player:
             return
-        card["obtained_at"] = datetime.now().isoformat()
+        now = datetime.now().isoformat()
+        card["obtained_at"] = now
+        card["caught_at"] = now
         if card_type == "driver":
             player["cards"]["drivers"].append(card)
         elif card_type == "car":
