@@ -1113,129 +1113,148 @@ async def f1_equip(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 
+RANK_EMOJIS_MAP = {
+    "Diamond": "💠",
+    "Platinum": "💎",
+    "Gold": "🥇",
+    "Silver": "🥈",
+    "Bronze": "🥉",
+}
+
+UPGRADE_BAR_MAP = {s: UPGRADE_INFO[s]["emoji"] for s in UPGRADE_STATS}
+
+
+def _upgrade_progress(level: int, max_level: int = 5) -> str:
+    filled = "█" * level
+    empty = "░" * (max_level - level)
+    return f"`{filled}{empty}`  Lv.{level}/{max_level}"
+
+
+def build_profile_embeds(player_id: str, display_name: str) -> List[discord.Embed]:
+    player = db.get_player(player_id)
+    if not player:
+        return []
+    stats = player.get("stats", {})
+    cards = db.get_player_cards(player_id)
+    upgrades = db.get_upgrades(player_id)
+    equipped = db.get_equipped(player_id)
+    coins = db.get_coins(player_id)
+
+    wins = stats.get("wins", 0)
+    losses = stats.get("losses", 0)
+    dnf = stats.get("dnf", 0)
+    total = stats.get("total_races", 0)
+    win_rate = (wins / total * 100) if total > 0 else 0.0
+    rank = stats.get("rank", "Bronze")
+    rp = stats.get("ranking_points", 0)
+    rank_emoji = RANK_EMOJIS_MAP.get(rank, "🏁")
+
+    n_drivers = len(cards.get("drivers", []))
+    n_cars = len(cards.get("cars", []))
+    n_team = len(cards.get("team_assets", []))
+    total_cards = n_drivers + n_cars + n_team
+
+    driver_name = "*None equipped*"
+    car_name = "*None equipped*"
+    if equipped.get("driver_id"):
+        d = db.get_card_by_id(player_id, equipped["driver_id"])
+        if d:
+            driver_name = f"{d['name']} ({d['code']})"
+    if equipped.get("car_id"):
+        c = db.get_card_by_id(player_id, equipped["car_id"])
+        if c:
+            car_name = c["name"]
+
+    total_upgrades = sum(upgrades.get(s, 0) for s in UPGRADE_STATS)
+    max_upgrades = UPGRADE_MAX_LEVEL * len(UPGRADE_STATS)
+
+    created = player.get("created_at", "")
+    try:
+        joined = datetime.fromisoformat(created).strftime("%b %d %Y")
+    except Exception:
+        joined = "Unknown"
+
+    # Embed 1 — Main profile
+    e1 = discord.Embed(title=f"{rank_emoji}  {display_name}", color=0x00FF88)
+    e1.add_field(
+        name="🏆 Race Record",
+        value=(
+            f"🥇 Wins: **{wins}**\n"
+            f"🥈 Losses: **{losses}**\n"
+            f"⚠️ DNF: **{dnf}**"
+        ),
+        inline=True,
+    )
+    e1.add_field(
+        name=f"{rank_emoji} Rank",
+        value=f"**{rank}**\n{rp} Ranking Points",
+        inline=True,
+    )
+    e1.add_field(
+        name="💰 Coins",
+        value=f"**{coins:,}**",
+        inline=True,
+    )
+    e1.add_field(
+        name="📊 Statistics",
+        value=f"📊 Total Races: **{total}**\n📈 Win Rate: **{win_rate:.1f}%**",
+        inline=False,
+    )
+    e1.set_footer(text=f"Joined: {joined}")
+
+    # Embed 2 — Collection
+    e2 = discord.Embed(title="🎴 Collection", color=0x64C8FF)
+    e2.add_field(name="👤 Drivers", value=f"**{n_drivers}**", inline=True)
+    e2.add_field(name="🏎️ Cars", value=f"**{n_cars}**", inline=True)
+    e2.add_field(name="🏗️ Staff", value=f"**{n_team}**", inline=True)
+    e2.add_field(name="✨ Total Cards", value=f"**{total_cards}**", inline=False)
+
+    # Embed 3 — Equipped
+    e3 = discord.Embed(title="🏎️ Currently Equipped", color=0xFF6B9D)
+    e3.add_field(name="👤 Driver", value=driver_name, inline=False)
+    e3.add_field(name="🏎️ Car", value=car_name, inline=False)
+
+    # Embed 4 — Upgrades
+    e4 = discord.Embed(title=f"🔧 Upgrades ({total_upgrades}/{max_upgrades})", color=0xFFC800)
+    for stat in UPGRADE_STATS:
+        info = UPGRADE_INFO[stat]
+        level = upgrades.get(stat, 0)
+        e4.add_field(
+            name=f"{info['emoji']} {info['label']}",
+            value=_upgrade_progress(level),
+            inline=True,
+        )
+
+    return [e1, e2, e3, e4]
+
+
 @f1_group.command(name="profile", description="View your F1 racing profile and stats")
 async def f1_profile(interaction: discord.Interaction):
     player_id = str(interaction.user.id)
     db.ensure_player(player_id, interaction.user.name)
     give_starter_cards(player_id, interaction.user.name)
-
-    player = db.get_player(player_id)
-    stats = player["stats"]
-    equipped = db.get_equipped(player_id)
-    cards = db.get_player_cards(player_id)
-
-    equipped_driver = db.get_card_by_id(player_id, equipped["driver_id"]) if equipped.get("driver_id") else None
-    equipped_car = db.get_card_by_id(player_id, equipped["car_id"]) if equipped.get("car_id") else None
-
-    rank_colors = {
-        "Diamond": 0x00FFFF,
-        "Platinum": 0xE5E4E2,
-        "Gold": 0xFFD700,
-        "Silver": 0xC0C0C0,
-        "Bronze": 0xCD7F32,
-    }
-
-    rank_emojis = {
-        "Diamond": "💎",
-        "Platinum": "🪙",
-        "Gold": "🏆",
-        "Silver": "🥈",
-        "Bronze": "🥉",
-    }
-
-    rank = stats.get("rank", "Bronze")
-    embed = discord.Embed(
-        title=f"🏁 {interaction.user.display_name}'s Profile",
-        color=rank_colors.get(rank, 0xCD7F32),
-    )
-
-    embed.add_field(
-        name=f"{rank_emojis.get(rank, '')} Rank",
-        value=f"**{rank}** — {stats['ranking_points']} pts",
-        inline=True,
-    )
-    embed.add_field(name="💰 Race Credits", value=f"**{player.get('coins', 0)}** 💰", inline=True)
-    embed.add_field(name="\u200b", value="\u200b", inline=True)
-
-    embed.add_field(
-        name="📊 Race Stats",
-        value=(
-            f"🏆 Wins: **{stats['wins']}**\n"
-            f"❌ Losses: **{stats['losses']}**\n"
-            f"🔥 Win Rate: **{stats['win_rate']:.0%}**\n"
-            f"🏎️ Total Races: **{stats['total_races']}**"
-        ),
-        inline=True,
-    )
-
-    d_emoji = card_module.RARITY_EMOJIS.get(equipped_driver["rarity"], "") if equipped_driver else ""
-    c_emoji = card_module.RARITY_EMOJIS.get(equipped_car["rarity"], "") if equipped_car else ""
-
-    embed.add_field(
-        name="⚙️ Active Loadout",
-        value=(
-            f"👤 {d_emoji} {equipped_driver['name']} ({equipped_driver['code']})\n"
-            if equipped_driver else "👤 *No driver equipped*\n"
-        ) + (
-            f"🏎️ {c_emoji} {equipped_car['name']}"
-            if equipped_car else "🏎️ *No car equipped*"
-        ),
-        inline=True,
-    )
-
-    total_cards = len(cards["drivers"]) + len(cards["cars"])
-    embed.add_field(name="\u200b", value="\u200b", inline=True)
-    embed.add_field(
-        name="🎴 Collection",
-        value=f"**{total_cards}** cards\n({len(cards['drivers'])} drivers, {len(cards['cars'])} cars)",
-        inline=False,
-    )
-
-    # Pack cooldowns
-    can_daily, daily_rem = db.can_claim_daily(player_id)
-    can_weekly, weekly_rem = db.can_claim_weekly(player_id)
-    daily_status = "✅ Ready!" if can_daily else f"⏳ {format_cooldown(daily_rem)}"
-    weekly_status = "✅ Ready!" if can_weekly else f"⏳ {format_cooldown(weekly_rem)}"
-    embed.add_field(
-        name="📦 Pack Status",
-        value=f"🗓️ Daily Pack: {daily_status}\n🏆 Weekly Pack: {weekly_status}",
-        inline=False,
-    )
-
-    embed.set_footer(text="Use /f1 collection to browse cards | /f1 equip to change loadout")
-    await interaction.response.send_message(embed=embed)
+    embeds = build_profile_embeds(player_id, interaction.user.display_name)
+    await interaction.response.send_message(embeds=embeds)
 
 
 @f1_group.command(name="collection", description="Browse your full card collection")
-@app_commands.describe(filter="Filter cards by type")
-@app_commands.choices(filter=[
-    app_commands.Choice(name="All Cards", value="all"),
-    app_commands.Choice(name="Drivers Only", value="driver"),
-    app_commands.Choice(name="Cars Only", value="car"),
-])
-async def f1_collection(interaction: discord.Interaction, filter: str = "all"):
+async def f1_collection(interaction: discord.Interaction):
     player_id = str(interaction.user.id)
     db.ensure_player(player_id, interaction.user.name)
     give_starter_cards(player_id, interaction.user.name)
 
     all_cards = db.get_all_cards_sorted(player_id)
-    if filter == "driver":
-        filtered = [c for c in all_cards if c["type"] == "driver"]
-    elif filter == "car":
-        filtered = [c for c in all_cards if c["type"] == "car"]
-    else:
-        filtered = all_cards
 
-    if not filtered:
+    if not all_cards:
         embed = discord.Embed(
             title="🎴 Your Collection",
             description="You have no cards yet! Open packs with `/pack daily` or `/pack weekly`.",
-            color=0x95A5A6,
+            color=0x5865F2,
         )
         await interaction.response.send_message(embed=embed)
         return
 
-    view = CollectionView(player_id, filtered, interaction.user.display_name)
+    view = CollectionView(player_id, all_cards, interaction.user.display_name)
     embed = view.build_embed()
     await interaction.response.send_message(embed=embed, view=view)
 
@@ -2490,15 +2509,24 @@ class CardSelectView(discord.ui.View):
 
 
 class CollectionView(discord.ui.View):
-    def __init__(self, player_id: str, cards: List[Dict], display_name: str, per_page: int = 8):
+    def __init__(self, player_id: str, all_cards: List[Dict], display_name: str, per_page: int = 5):
         super().__init__(timeout=120)
         self.player_id = player_id
-        self.cards = cards
+        self.all_cards = all_cards
         self.display_name = display_name
         self.per_page = per_page
+        self.filter_type = "all"
         self.page = 0
-        self.total_pages = max(1, (len(cards) + per_page - 1) // per_page)
+        self._update_filtered()
         self._rebuild()
+
+    def _update_filtered(self):
+        if self.filter_type == "all":
+            self.cards = self.all_cards
+        else:
+            self.cards = [c for c in self.all_cards if c["type"] == self.filter_type]
+        self.total_pages = max(1, (len(self.cards) + self.per_page - 1) // self.per_page)
+        self.page = min(self.page, max(0, self.total_pages - 1))
 
     def _get_page_cards(self) -> List[Dict]:
         start = self.page * self.per_page
@@ -2509,24 +2537,57 @@ class CollectionView(discord.ui.View):
         is_first = self.page == 0
         is_last = self.page >= self.total_pages - 1
 
-        first_btn = discord.ui.Button(label="⏮", style=discord.ButtonStyle.secondary, disabled=is_first, row=0)
-        first_btn.callback = self._go_first
-        self.add_item(first_btn)
+        all_btn = discord.ui.Button(
+            label="📋 All",
+            style=discord.ButtonStyle.primary if self.filter_type == "all" else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        all_btn.callback = self._filter_all
+        self.add_item(all_btn)
 
-        prev_btn = discord.ui.Button(label="◀", style=discord.ButtonStyle.secondary, disabled=is_first, row=0)
+        drivers_btn = discord.ui.Button(
+            label="👤 Drivers",
+            style=discord.ButtonStyle.primary if self.filter_type == "driver" else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        drivers_btn.callback = self._filter_drivers
+        self.add_item(drivers_btn)
+
+        cars_btn = discord.ui.Button(
+            label="🏎️ Cars",
+            style=discord.ButtonStyle.primary if self.filter_type == "car" else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        cars_btn.callback = self._filter_cars
+        self.add_item(cars_btn)
+
+        assets_btn = discord.ui.Button(
+            label="🏗️ Staff",
+            style=discord.ButtonStyle.primary if self.filter_type == "team_asset" else discord.ButtonStyle.secondary,
+            row=0,
+        )
+        assets_btn.callback = self._filter_assets
+        self.add_item(assets_btn)
+
+        prev_btn = discord.ui.Button(label="◀️", style=discord.ButtonStyle.secondary, disabled=is_first, row=1)
         prev_btn.callback = self._go_prev
         self.add_item(prev_btn)
 
-        page_btn = discord.ui.Button(label=f"{self.page + 1} / {self.total_pages}", style=discord.ButtonStyle.primary, disabled=True, row=0)
+        page_btn = discord.ui.Button(
+            label=f"{self.page + 1} / {self.total_pages}",
+            style=discord.ButtonStyle.primary,
+            disabled=True,
+            row=1,
+        )
         self.add_item(page_btn)
 
-        next_btn = discord.ui.Button(label="▶", style=discord.ButtonStyle.secondary, disabled=is_last, row=0)
+        next_btn = discord.ui.Button(label="▶️", style=discord.ButtonStyle.secondary, disabled=is_last, row=1)
         next_btn.callback = self._go_next
         self.add_item(next_btn)
 
-        last_btn = discord.ui.Button(label="⏭", style=discord.ButtonStyle.secondary, disabled=is_last, row=0)
-        last_btn.callback = self._go_last
-        self.add_item(last_btn)
+        quit_btn = discord.ui.Button(label="✖ Close", style=discord.ButtonStyle.danger, row=1)
+        quit_btn.callback = self._on_quit
+        self.add_item(quit_btn)
 
         page_cards = self._get_page_cards()
         if page_cards:
@@ -2542,35 +2603,30 @@ class CollectionView(discord.ui.View):
                 else:
                     label = f"{emoji} {card['name']}"
                     desc = f"{card['rarity'].title()} | {card.get('role', 'Team Asset')}"
-                obtained = card.get("obtained_at", "")
-                if obtained:
-                    try:
-                        dt = datetime.fromisoformat(obtained)
-                        desc += f" | {dt.strftime('%Y/%m/%d')}"
-                    except Exception:
-                        pass
                 options.append(discord.SelectOption(label=label[:100], description=desc[:100], value=card["id"]))
 
-            select = discord.ui.Select(placeholder="Select a card to view details...", options=options, row=1)
+            select = discord.ui.Select(placeholder="Select a card to view details...", options=options, row=2)
             select.callback = self._on_select
             self.add_item(select)
-
-        quit_btn = discord.ui.Button(label="✖ Close", style=discord.ButtonStyle.danger, row=2)
-        quit_btn.callback = self._on_quit
-        self.add_item(quit_btn)
 
     def build_embed(self) -> discord.Embed:
         page_cards = self._get_page_cards()
         equipped = db.get_equipped(self.player_id)
+        filter_label = {
+            "all": "All Cards",
+            "driver": "Drivers",
+            "car": "Cars",
+            "team_asset": "Team Assets",
+        }.get(self.filter_type, "All Cards")
         embed = discord.Embed(
             title=f"{self.display_name}'s Collection",
-            description=f"{len(self.cards)} cards  ·  Page {self.page + 1} of {self.total_pages}",
-            color=0x2C3E50,
+            description=f"{len(self.cards)} cards  ·  Page {self.page + 1} of {self.total_pages}  ·  {filter_label}",
+            color=0x5865F2,
         )
         for card in page_cards:
             rarity = card["rarity"].title()
             is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
-            eq = "  [Equipped]" if is_equipped else ""
+            eq = "  ✅" if is_equipped else ""
 
             if card["type"] == "driver":
                 field_name = f"{card['name']} ({card['code']}){eq}"
@@ -2584,11 +2640,11 @@ class CollectionView(discord.ui.View):
 
             if card.get("perks"):
                 perk_name = card["perks"][0].replace("_", " ").title()
-                field_val += f"  ·  {perk_name}"
+                field_val += f"  ·  ✨ {perk_name}"
 
             embed.add_field(name=field_name, value=field_val, inline=False)
 
-        embed.set_footer(text="[Equipped] = active card  ·  /f1 equip to change loadout")
+        embed.set_footer(text="✅ = Equipped  ·  Use /f1 equip to change loadout")
         return embed
 
     async def _check(self, interaction: discord.Interaction) -> bool:
@@ -2597,9 +2653,35 @@ class CollectionView(discord.ui.View):
             return False
         return True
 
-    async def _go_first(self, interaction: discord.Interaction):
+    async def _filter_all(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
+        self.filter_type = "all"
         self.page = 0
+        self._update_filtered()
+        self._rebuild()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    async def _filter_drivers(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.filter_type = "driver"
+        self.page = 0
+        self._update_filtered()
+        self._rebuild()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    async def _filter_cars(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.filter_type = "car"
+        self.page = 0
+        self._update_filtered()
+        self._rebuild()
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
+
+    async def _filter_assets(self, interaction: discord.Interaction):
+        if not await self._check(interaction): return
+        self.filter_type = "team_asset"
+        self.page = 0
+        self._update_filtered()
         self._rebuild()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
@@ -2612,12 +2694,6 @@ class CollectionView(discord.ui.View):
     async def _go_next(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
         self.page = min(self.total_pages - 1, self.page + 1)
-        self._rebuild()
-        await interaction.response.edit_message(embed=self.build_embed(), view=self)
-
-    async def _go_last(self, interaction: discord.Interaction):
-        if not await self._check(interaction): return
-        self.page = self.total_pages - 1
         self._rebuild()
         await interaction.response.edit_message(embed=self.build_embed(), view=self)
 
@@ -2648,12 +2724,12 @@ class CollectionView(discord.ui.View):
                 stats += f"\n{effect}"
 
         if is_equipped:
-            stats += "  ·  Equipped"
+            stats += "  ·  ✅ Equipped"
 
         if card.get("perks"):
             perk_key = card["perks"][0]
             perk_data = card_module.PERKS.get(perk_key, {})
-            stats += f"\n{perk_data.get('name', perk_key)} — {perk_data.get('description', '')}"
+            stats += f"\n✨ {perk_data.get('name', perk_key)} — {perk_data.get('description', '')}"
 
         detail = discord.Embed(title=title, description=stats, color=color)
 
@@ -3083,95 +3159,11 @@ async def garage_slash(interaction: discord.Interaction):
 @bot.tree.command(name="profile", description="View your F1 racing profile and full stats")
 @app_commands.describe(member="Player to view (leave blank for yourself)")
 async def profile_slash(interaction: discord.Interaction, member: Optional[discord.Member] = None):
-    target   = member or interaction.user
+    target = member or interaction.user
     player_id = str(target.id)
     db.ensure_player(player_id, target.name)
-
-    player   = db.get_player(player_id)
-    stats    = player.get("stats", {})
-    coins    = db.get_coins(player_id)
-    cards    = db.get_player_cards(player_id)
-    upgrades = db.get_upgrades(player_id)
-    equipped = db.get_equipped(player_id)
-
-    wins     = stats.get("wins", 0)
-    losses   = stats.get("losses", 0)
-    dnf      = stats.get("dnf", 0)
-    total    = stats.get("total_races", 0)
-    win_rate = (wins / total * 100) if total > 0 else 0.0
-    rank     = stats.get("rank", "Bronze")
-    rp       = stats.get("ranking_points", 0)
-
-    RANK_EMOJIS = {"Bronze": "🥉", "Silver": "🥈", "Gold": "🥇", "Platinum": "💎", "Diamond": "💠"}
-    rank_emoji = RANK_EMOJIS.get(rank, "🏁")
-
-    # Collection counts
-    n_drivers = len(cards.get("drivers", []))
-    n_cars    = len(cards.get("cars", []))
-    n_team    = len(cards.get("team_assets", []))
-
-    # Equipped loadout quick view
-    driver_name = "None"
-    car_name    = "None"
-    if equipped.get("driver_id"):
-        d = db.get_card_by_id(player_id, equipped["driver_id"])
-        if d:
-            driver_name = f"{d['name']} ({d['code']})"
-    if equipped.get("car_id"):
-        c = db.get_card_by_id(player_id, equipped["car_id"])
-        if c:
-            car_name = c["name"]
-
-    # Total upgrade levels
-    total_upgrades = sum(upgrades.get(s, 0) for s in UPGRADE_STATS)
-    upgrade_str = " · ".join(
-        f"{UPGRADE_INFO[s]['emoji']}Lv.{upgrades.get(s,0)}" for s in UPGRADE_STATS
-    )
-
-    created = player.get("created_at", "")
-    try:
-        joined = datetime.fromisoformat(created).strftime("%b %d %Y")
-    except Exception:
-        joined = "Unknown"
-
-    embed = discord.Embed(
-        title=f"{rank_emoji}  {target.display_name}",
-        description=f"*F1 Card Racing Profile*",
-        color=0x1ABC9C,
-    )
-    embed.set_thumbnail(url=target.display_avatar.url)
-
-    embed.add_field(
-        name="🏆 Race Record",
-        value=(
-            f"🥇 Wins: **{wins}**  ·  🥈 Losses: **{losses}**  ·  ⚠️ DNF: **{dnf}**\n"
-            f"📊 Total Races: **{total}**  ·  Win Rate: **{win_rate:.1f}%**"
-        ),
-        inline=False,
-    )
-    embed.add_field(name=f"{rank_emoji} Rank", value=f"**{rank}**  ·  {rp} RP", inline=True)
-    embed.add_field(name="💰 Coins",           value=f"**{coins:,}**",              inline=True)
-
-    embed.add_field(
-        name="🎴 Collection",
-        value=(
-            f"👤 Drivers: **{n_drivers}**  ·  🏎️ Cars: **{n_cars}**  ·  🏗️ Staff: **{n_team}**\n"
-            f"Total: **{n_drivers + n_cars + n_team}** cards"
-        ),
-        inline=False,
-    )
-    embed.add_field(
-        name="🏎️ Equipped",
-        value=f"👤 {driver_name}\n🏎️ {car_name}",
-        inline=True,
-    )
-    embed.add_field(
-        name=f"🔧 Upgrades ({total_upgrades}/{UPGRADE_MAX_LEVEL * len(UPGRADE_STATS)})",
-        value=upgrade_str,
-        inline=False,
-    )
-    embed.set_footer(text=f"Joined: {joined}  ·  Use /garage for full loadout")
-    await interaction.response.send_message(embed=embed)
+    embeds = build_profile_embeds(player_id, target.display_name)
+    await interaction.response.send_message(embeds=embeds)
 
 
 # ==================== MAIN ====================

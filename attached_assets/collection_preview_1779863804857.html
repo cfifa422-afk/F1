@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collection Preview</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #36393f;
+            color: #dcddde;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        .message {
+            background: #2f3136;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .message-header {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            align-items: flex-start;
+        }
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #5865F2, #4752C4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+        .header-text { flex: 1; }
+        .username { font-weight: 600; color: #fff; }
+        .timestamp { font-size: 12px; color: #72767d; margin-left: 8px; }
+        .embed {
+            background: #2f3136;
+            border-left: 4px solid #5865F2;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+        .embed-header {
+            background: rgba(88, 101, 242, 0.1);
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(88, 101, 242, 0.2);
+        }
+        .embed-title {
+            font-weight: 600;
+            color: #fff;
+            font-size: 15px;
+        }
+        .embed-description {
+            font-size: 13px;
+            color: #b9bbbe;
+            margin-top: 4px;
+        }
+        .embed-body { padding: 16px; }
+        .card-item {
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid rgba(88, 101, 242, 0.1);
+        }
+        .card-item:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .card-name {
+            font-weight: 600;
+            color: #fff;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        .card-details {
+            color: #b9bbbe;
+            font-size: 13px;
+        }
+        .button-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        .btn {
+            background: #5865F2;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn.secondary {
+            background: #4E5058;
+        }
+        .title {
+            text-align: center;
+            color: #5865F2;
+            margin-bottom: 40px;
+            font-size: 24px;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">📚 New Collection View</div>
+
+        <div class="message">
+            <div class="message-header">
+                <div class="avatar">👤</div>
+                <div class="header-text">
+                    <span class="username">@Elliott</span>
+                    <span class="timestamp">Today at 11:25 AM</span>
+                </div>
+            </div>
+
+            <div class="embed">
+                <div class="embed-header">
+                    <div class="embed-title">MaTriX's Collection</div>
+                    <div class="embed-description">47 cards · Page 1 of 6</div>
+                </div>
+                <div class="embed-body">
+                    <div class="card-item">
+                        <div class="card-name">Williams FW44</div>
+                        <div class="card-details">Williams · 338 km/h · Common</div>
+                    </div>
+
+                    <div class="card-item">
+                        <div class="card-name">Esteban Ocon (OCO)</div>
+                        <div class="card-details">Alpine · Skill 7/10 · Rare</div>
+                    </div>
+
+                    <div class="card-item">
+                        <div class="card-name">Adrian Newey</div>
+                        <div class="card-details">Red Bull · Chief Designer · Legendary</div>
+                    </div>
+
+                    <div class="card-item">
+                        <div class="card-name">Pirelli Engineers</div>
+                        <div class="card-details">Pirelli · Tyre Specialists · Epic</div>
+                    </div>
+
+                    <div class="card-item">
+                        <div class="card-name">McLaren MCL60S</div>
+                        <div class="card-details">McLaren · 406 km/h · Legendary</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn" style="background: #5865F2;">👤 Drivers</button>
+                <button class="btn secondary">🏎️ Cars</button>
+                <button class="btn secondary">🏗️ Team Assets</button>
+                <button class="btn secondary">◀️</button>
+                <button class="btn secondary">▶️</button>
+            </div>
+        </div>
+
+        <div style="text-align: center; color: #72767d; margin-top: 30px; font-size: 12px;">
+            <p>✅ Clean card listing format</p>
+            <p>✅ 5 cards per page with pagination</p>
+            <p>✅ Easy to scan and navigate</p>
+            <p>✅ Shows name + details in one line</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Profile Preview</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #36393f;
+            color: #dcddde;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .message {
+            background: #2f3136;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .message-header {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            align-items: flex-start;
+        }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff6b00, #ff8c00);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+
+        .header-text {
+            flex: 1;
+        }
+
+        .username {
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .timestamp {
+            font-size: 12px;
+            color: #72767d;
+            margin-left: 8px;
+        }
+
+        .embed {
+            background: #2f3136;
+            border-left: 4px solid #00ff88;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+
+        .embed-header {
+            background: rgba(0, 255, 136, 0.1);
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(0, 255, 136, 0.2);
+        }
+
+        .embed-title {
+            font-weight: 600;
+            color: #fff;
+            font-size: 15px;
+        }
+
+        .embed-body {
+            padding: 16px;
+        }
+
+        .embed-field {
+            margin-bottom: 16px;
+            display: inline-block;
+            width: calc(50% - 8px);
+            margin-right: 16px;
+        }
+
+        .embed-field:nth-child(odd) {
+            margin-right: 16px;
+        }
+
+        .embed-field:nth-child(even) {
+            margin-right: 0;
+        }
+
+        .embed-field-name {
+            font-weight: 600;
+            color: #fff;
+            font-size: 13px;
+            margin-bottom: 6px;
+        }
+
+        .embed-field-value {
+            color: #b9bbbe;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .embed-field-full {
+            width: 100%;
+            display: block;
+        }
+
+        /* Different embed colors */
+        .embed-primary {
+            border-left-color: #00ff88;
+        }
+
+        .embed-primary .embed-header {
+            background: rgba(0, 255, 136, 0.1);
+            border-bottom-color: rgba(0, 255, 136, 0.2);
+        }
+
+        .embed-collection {
+            border-left-color: #64c8ff;
+        }
+
+        .embed-collection .embed-header {
+            background: rgba(100, 200, 255, 0.1);
+            border-bottom-color: rgba(100, 200, 255, 0.2);
+        }
+
+        .embed-equipped {
+            border-left-color: #ff6b9d;
+        }
+
+        .embed-equipped .embed-header {
+            background: rgba(255, 107, 157, 0.1);
+            border-bottom-color: rgba(255, 107, 157, 0.2);
+        }
+
+        .embed-upgrades {
+            border-left-color: #ffc800;
+        }
+
+        .embed-upgrades .embed-header {
+            background: rgba(255, 200, 0, 0.1);
+            border-bottom-color: rgba(255, 200, 0, 0.2);
+        }
+
+        .embed-thumbnail {
+            float: right;
+            width: 80px;
+            height: 80px;
+            border-radius: 4px;
+            margin-left: 16px;
+            background: linear-gradient(135deg, #ff6b00, #ff8c00);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 40px;
+        }
+
+        .embed-footer {
+            padding: 8px 16px;
+            border-top: 1px solid rgba(0, 0, 0, 0.3);
+            font-size: 12px;
+            color: #72767d;
+        }
+
+        .progress-bar {
+            background: #202225;
+            border-radius: 3px;
+            height: 6px;
+            margin-top: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            background: #00ff88;
+            height: 100%;
+            width: 80%;
+        }
+
+        .title {
+            text-align: center;
+            color: #00ff88;
+            margin-bottom: 40px;
+            font-size: 24px;
+            font-weight: 700;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">📋 New Profile Display</div>
+
+        <div class="message">
+            <div class="message-header">
+                <div class="avatar">🥉</div>
+                <div class="header-text">
+                    <span class="username">@Elliott</span>
+                    <span class="timestamp">Today at 10:05 AM</span>
+                </div>
+            </div>
+
+            <!-- EMBED 1: Main Profile -->
+            <div class="embed embed-primary">
+                <div class="embed-header">
+                    <div class="embed-title">🥉  MaTriX</div>
+                </div>
+                <div class="embed-body">
+                    <div class="embed-thumbnail">🏎️</div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">🏆 Race Record</div>
+                        <div class="embed-field-value">🥇 Wins: <b>4</b>
+🥈 Losses: <b>1</b>
+⚠️  DNF: <b>0</b></div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">🥉 Rank</div>
+                        <div class="embed-field-value"><b>Bronze</b>
+210 Ranking Points</div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">💰 Coins</div>
+                        <div class="embed-field-value"><b>66,925</b></div>
+                    </div>
+                    <div class="embed-field embed-field-full">
+                        <div class="embed-field-name">📊 Statistics</div>
+                        <div class="embed-field-value">📊 Total Races: <b>5</b>
+📈 Win Rate: <b>80.0%</b></div>
+                    </div>
+                </div>
+                <div class="embed-footer">Joined: May 25 2026</div>
+            </div>
+
+            <!-- EMBED 2: Collection -->
+            <div class="embed embed-collection">
+                <div class="embed-header">
+                    <div class="embed-title">🎴 Collection</div>
+                </div>
+                <div class="embed-body">
+                    <div class="embed-field">
+                        <div class="embed-field-name">👤 Drivers</div>
+                        <div class="embed-field-value"><b>20</b></div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">🏎️ Cars</div>
+                        <div class="embed-field-value"><b>22</b></div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">🏗️ Staff</div>
+                        <div class="embed-field-value"><b>5</b></div>
+                    </div>
+                    <div class="embed-field embed-field-full">
+                        <div class="embed-field-name">✨ Total Cards</div>
+                        <div class="embed-field-value"><b>47</b></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- EMBED 3: Equipped -->
+            <div class="embed embed-equipped">
+                <div class="embed-header">
+                    <div class="embed-title">🏎️ Currently Equipped</div>
+                </div>
+                <div class="embed-body">
+                    <div class="embed-field embed-field-full">
+                        <div class="embed-field-name">👤 Driver</div>
+                        <div class="embed-field-value">Lewis Hamilton (HAM)</div>
+                    </div>
+                    <div class="embed-field embed-field-full">
+                        <div class="embed-field-name">🏎️ Car</div>
+                        <div class="embed-field-value">Alpine A523</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- EMBED 4: Upgrades -->
+            <div class="embed embed-upgrades">
+                <div class="embed-header">
+                    <div class="embed-title">🔧 Upgrades (2/25)</div>
+                </div>
+                <div class="embed-body">
+                    <div class="embed-field">
+                        <div class="embed-field-name">❤️ Engine</div>
+                        <div class="embed-field-value"><code>██░░░</code> Lv.2/5</div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">🔵 Aerodynamics</div>
+                        <div class="embed-field-value"><code>░░░░░</code> Lv.0/5</div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">🟡 Suspension</div>
+                        <div class="embed-field-value"><code>░░░░░</code> Lv.0/5</div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">🟢 Brakes</div>
+                        <div class="embed-field-value"><code>░░░░░</code> Lv.0/5</div>
+                    </div>
+                    <div class="embed-field">
+                        <div class="embed-field-name">⚪ Tires</div>
+                        <div class="embed-field-value"><code>░░░░░</code> Lv.0/5</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; color: #72767d; margin-top: 30px; font-size: 12px;">
+            <p>✅ Clean multi-embed design for Discord</p>
+            <p>✅ Color-coded by category</p>
+            <p>✅ Easy to scan and read</p>
+        </div>
+    </div>
+</body>
+</html>
