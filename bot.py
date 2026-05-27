@@ -2536,9 +2536,12 @@ class CollectionView(discord.ui.View):
                 if card["type"] == "driver":
                     label = f"{emoji} {card['name']} ({card['code']})"
                     desc = f"{card['rarity'].title()} | Skill: {card['skill']}/10"
-                else:
+                elif card["type"] == "car":
                     label = f"{emoji} {card['name']}"
                     desc = f"{card['rarity'].title()} | {card['top_speed']}km/h"
+                else:
+                    label = f"{emoji} {card['name']}"
+                    desc = f"{card['rarity'].title()} | {card.get('role', 'Team Asset')}"
                 obtained = card.get("obtained_at", "")
                 if obtained:
                     try:
@@ -2572,9 +2575,12 @@ class CollectionView(discord.ui.View):
             if card["type"] == "driver":
                 field_name = f"{card['name']} ({card['code']}){eq}"
                 field_val = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {rarity}"
-            else:
+            elif card["type"] == "car":
                 field_name = f"{card['name']}{eq}"
                 field_val = f"{card['team']}  ·  {card['top_speed']} km/h  ·  {rarity}"
+            else:
+                field_name = f"{card['name']}{eq}"
+                field_val = f"{card['team']}  ·  {card.get('role', 'Team Asset')}  ·  {rarity}"
 
             if card.get("perks"):
                 perk_name = card["perks"][0].replace("_", " ").title()
@@ -2630,9 +2636,16 @@ class CollectionView(discord.ui.View):
         if card["type"] == "driver":
             title = f"{card['name']} ({card['code']})"
             stats = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {card['rarity'].title()}"
-        else:
+        elif card["type"] == "car":
             title = card["name"]
             stats = f"{card['team']}  ·  {card['top_speed']} km/h  ·  Handling {card.get('handling', '?')}/10  ·  {card['rarity'].title()}"
+        else:
+            title = card["name"]
+            role = card.get("role", "Team Asset")
+            effect = card.get("effect", "")
+            stats = f"{card['team']}  ·  {role}  ·  {card['rarity'].title()}"
+            if effect:
+                stats += f"\n{effect}"
 
         if is_equipped:
             stats += "  ·  Equipped"

@@ -7,7 +7,7 @@
       "coins": 66925,
       "equipped": {
         "driver_id": "driver_HAM_48771",
-        "car_id": "starter_car_1141690369445216326",
+        "car_id": "car_Alpine_77239",
         "team_assets": [
           "team_Mercedes_Mercedes_Data_Team_58098",
           "team_RedBull_Adrian_Newey_97230",
@@ -501,6 +501,18 @@
             "rarity": "legendary",
             "perks": [],
             "obtained_at": "2026-05-26T06:23:56.809294"
+          },
+          {
+            "id": "0BA8F02",
+            "type": "car",
+            "name": "Williams FW44",
+            "team": "Williams",
+            "top_speed": 338,
+            "handling": 6.2,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-27T05:13:18.456019",
+            "caught_at": "2026-05-27T05:13:18.456019"
           }
         ],
         "team_assets": [
