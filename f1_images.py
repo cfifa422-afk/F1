@@ -62,14 +62,54 @@ def _load_all():
     """Called once at import time to fill _store."""
     base = os.path.join(_HERE, "card_images")
 
+    print(f"[f1_images] Looking for card_images at: {base}")
+    print(f"[f1_images] card_images/ exists: {os.path.isdir(base)}")
+
+    if os.path.isdir(base):
+        contents = os.listdir(base)
+        print(f"[f1_images] card_images/ contents: {contents}")
+        cars_dir = os.path.join(base, "cars")
+        print(f"[f1_images] card_images/cars/ exists: {os.path.isdir(cars_dir)}")
+        if os.path.isdir(cars_dir):
+            print(f"[f1_images] card_images/cars/ contents: {os.listdir(cars_dir)}")
+
     # Driver card art  (key = "ALB", "VER", …)
     n = _load_dir(base, "", str.upper)
+    print(f"[f1_images] Driver images loaded: {n}")
 
     # Car card art  (key = "car:Williams_FW45", …)
-    n += _load_dir(os.path.join(base, "cars"), "car:", _slugify)
+    # Primary: card_images/cars/ subdirectory
+    cars_subdir = os.path.join(base, "cars")
+    car_count = _load_dir(cars_subdir, "car:", _slugify)
+    # Fallback: some hosting setups extract zips flat — also scan card_images/ root
+    # for files whose names look like car names (contain underscore patterns of known cars)
+    if car_count == 0:
+        print("[f1_images] No cars/ subfolder found — scanning card_images/ root for car images")
+        _CAR_PREFIXES = (
+            "Alfa", "Alpha", "Alpine", "Aston", "Ferrari", "Haas",
+            "McLaren", "Mercedes", "Red_Bull", "Williams", "Red Bull",
+        )
+        for fname in os.listdir(base) if os.path.isdir(base) else []:
+            stem, ext = os.path.splitext(fname)
+            if ext.lower() not in _IMAGE_EXTS:
+                continue
+            if any(stem.startswith(p) or stem.replace("_", " ").startswith(p) for p in _CAR_PREFIXES):
+                path = os.path.join(base, fname)
+                try:
+                    with open(path, "rb") as f:
+                        raw = f.read()
+                    key = "car:" + _slugify(stem)
+                    _store[key] = (fname, raw)
+                    car_count += 1
+                except Exception as e:
+                    log.warning("Could not load car image %s: %s", path, e)
+    n += car_count
+    print(f"[f1_images] Car images loaded: {car_count}")
 
     # Spawn driver art  (key = "spawn:ALB", …)
-    n += _load_dir(os.path.join(base, "spawn"), "spawn:", str.upper)
+    spawn_count = _load_dir(os.path.join(base, "spawn"), "spawn:", str.upper)
+    n += spawn_count
+    print(f"[f1_images] Spawn images loaded: {spawn_count}")
 
     # Spawn car art  (key = "spawn_car:car_Williams_FW45", …)
     # Saved by addcar as  card_images/spawn/car_{slug}.ext
@@ -92,8 +132,10 @@ def _load_all():
             except Exception as e:
                 log.warning("Could not load spawn car image %s: %s", path, e)
 
+    print(f"[f1_images] ✅ Total images in memory: {len(_store)}")
     log.info("f1_images: loaded %d card images into memory", len(_store))
     if n == 0:
+        print(f"[f1_images] ❌ NO images loaded — card_images/ not found or empty at {base}")
         log.warning(
             "f1_images: NO images loaded — card_images/ not found at %s", base
         )
