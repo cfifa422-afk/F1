@@ -284,13 +284,7 @@ def card_to_driver(card: Dict) -> Driver:
 
 def make_card_art_file(card: Dict) -> Optional[discord.File]:
     """Return a discord.File for the card's local image, or None if not available."""
-    import os as _os
-    path = f1_images.get_local_card_path(card)
-    if path and _os.path.exists(path):
-        slug = card.get("code", card.get("name", "card")).replace(" ", "_").upper()
-        ext = _os.path.splitext(path)[1] or ".jpg"
-        return discord.File(path, filename=f"card_{slug}{ext}")
-    return None
+    return f1_images.get_card_file(card)
 
 
 def give_starter_cards(player_id: str, username: str):
@@ -426,10 +420,6 @@ def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: 
             inline=False,
         )
 
-    img = f1_images.get_card_image(card)
-    if img:
-        embed.set_image(url=img)
-
     embed.set_footer(text=format_card_footer(card))
     return embed
 
@@ -463,10 +453,6 @@ def build_spawn_embed(card: Dict) -> discord.Embed:
         ),
         color=color,
     )
-
-    img = f1_images.get_card_image(card)
-    if img:
-        embed.set_image(url=img)
 
     embed.set_footer(text="Click Catch me! and type the exact name to claim this card  ·  Expires in 5 minutes")
     return embed
@@ -950,9 +936,6 @@ class SpawnView(discord.ui.View):
                     ),
                     color=0x5C5C5C,
                 )
-                img = f1_images.get_card_image(self.card)
-                if img:
-                    expired_embed.set_image(url=img)
                 expired_embed.set_footer(text="Better luck next time!")
                 await self.message.edit(embed=expired_embed, view=self)
             except Exception:
@@ -987,12 +970,8 @@ async def spawn_wild_card():
         try:
             card = card_module.generate_spawn_card()
             embed = build_spawn_embed(card)
-            spawn_path = f1_images.get_local_spawn_path(card)
-            spawn_file = None
-            if spawn_path and os.path.exists(spawn_path):
-                slug = card.get("code", card.get("name", "card")).replace(" ", "_").upper()
-                ext = os.path.splitext(spawn_path)[1] or ".jpg"
-                spawn_file = discord.File(spawn_path, filename=f"spawn_{slug}{ext}")
+            spawn_file = f1_images.get_spawn_file(card)
+            if spawn_file:
                 embed.set_image(url=f"attachment://{spawn_file.filename}")
             view = SpawnView(card)
             if spawn_file:
