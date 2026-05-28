@@ -454,6 +454,20 @@
             "perks": [],
             "obtained_at": "2026-05-28T08:32:30.124622",
             "caught_at": "2026-05-28T08:32:30.124622"
+          },
+          {
+            "id": "86358A2",
+            "type": "car",
+            "name": "Alfa Romeo C43",
+            "team": "Alfa Romeo",
+            "top_speed": 340,
+            "handling": 6.4,
+            "rarity": "common",
+            "perks": [
+              "pit_crew_chief"
+            ],
+            "obtained_at": "2026-05-28T11:20:53.417568",
+            "caught_at": "2026-05-28T11:20:53.417568"
           }
         ],
         "team_assets": [

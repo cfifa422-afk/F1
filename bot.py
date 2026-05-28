@@ -901,7 +901,7 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
             else:
                 extra = "Added to your collection. Use `/f1 equip` to race with it."
             await interaction.followup.send(
-                f"{interaction.user.mention} You caught **{display}**! ({card_display_id},  {rarity_label})\n"
+                f"{interaction.user.mention} You caught **{display}**! ``({card_display_id},  {rarity_label})``\n"
                 f"{extra}"
             )
             self.spawn_view.stop()
@@ -3241,27 +3241,20 @@ class CollectionView(discord.ui.View):
         caught_line = ""
         if caught_raw:
             try:
+                import calendar
                 caught_dt = datetime.fromisoformat(str(caught_raw))
-                delta = datetime.now() - caught_dt
-                if delta.days == 0:
-                    hours = delta.seconds // 3600
-                    rel = f"{hours} hour{'s' if hours != 1 else ''} ago" if hours > 0 else "just now"
-                elif delta.days == 1:
-                    rel = "1 day ago"
-                else:
-                    rel = f"{delta.days} days ago"
-                caught_str = caught_dt.strftime("%b %d, %Y %I:%M %p")
-                caught_line = f"Caught on {caught_str} ({rel})"
+                ts = int(calendar.timegm(caught_dt.timetuple()))
+                caught_line = f"Caught on <t:{ts}> (<t:{ts}:R>)"
             except Exception:
                 caught_line = ""
 
         player_data = db.get_player(self.player_id)
         total_races = player_data.get("stats", {}).get("total_races", 0) if player_data else 0
 
-        lines = [f"ID: #{card_display_id}"]
+        lines = [f"``ID: #{card_display_id}``"]
         if caught_line:
             lines.append(caught_line)
-        lines.append(f"Matches played: {total_races}")
+        lines.append(f"``Matches played``: {total_races}")
         content = "\n".join(lines)
 
         art_file = make_card_art_file(card)
