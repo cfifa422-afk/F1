@@ -282,12 +282,13 @@ def card_to_driver(card: Dict) -> Driver:
 
 
 def make_card_art_file(card: Dict) -> Optional[discord.File]:
-    """Return a discord.File for the card's local art image, or None if not available."""
+    """Return a discord.File for the card's local image, or None if not available."""
     import os as _os
-    path = f1_images.get_card_art_path(card)
+    path = f1_images.get_local_card_path(card)
     if path and _os.path.exists(path):
-        code = card.get("code", card.get("name", "card")).replace(" ", "_").upper()
-        return discord.File(path, filename=f"card_{code}.png")
+        slug = card.get("code", card.get("name", "card")).replace(" ", "_").upper()
+        ext = _os.path.splitext(path)[1] or ".jpg"
+        return discord.File(path, filename=f"card_{slug}{ext}")
     return None
 
 
@@ -2841,10 +2842,6 @@ class CardSelectView(discord.ui.View):
                 embed.add_field(name="✨ Perk", value=card["perks"][0].replace("_", " ").title(), inline=True)
             if art_file:
                 embed.set_image(url=f"attachment://{art_file.filename}")
-            else:
-                img = f1_images.get_card_image(card)
-                if img:
-                    embed.set_image(url=img)
             embed.set_footer(text="Your equipped card will be used in your next race")
         else:
             art_file = None
@@ -3088,10 +3085,6 @@ class CollectionView(discord.ui.View):
         art_file = make_card_art_file(card)
         if art_file:
             detail.set_image(url=f"attachment://{art_file.filename}")
-        else:
-            img = f1_images.get_card_image(card)
-            if img:
-                detail.set_image(url=img)
 
         detail.set_footer(text=format_card_footer(card))
         if art_file:
