@@ -281,6 +281,16 @@ def card_to_driver(card: Dict) -> Driver:
     )
 
 
+def make_card_art_file(card: Dict) -> Optional[discord.File]:
+    """Return a discord.File for the card's local art image, or None if not available."""
+    import os as _os
+    path = f1_images.get_card_art_path(card)
+    if path and _os.path.exists(path):
+        code = card.get("code", card.get("name", "card")).replace(" ", "_").upper()
+        return discord.File(path, filename=f"card_{code}.png")
+    return None
+
+
 def give_starter_cards(player_id: str, username: str):
     """Give starter cards to brand new players."""
     cards = db.get_player_cards(player_id)
@@ -964,8 +974,11 @@ async def spawn_wild_card():
         try:
             card = card_module.generate_spawn_card()
             embed = build_spawn_embed(card)
+            art_file = make_card_art_file(card)
+            if art_file:
+                embed.set_image(url=f"attachment://{art_file.filename}")
             view = SpawnView(card)
-            msg = await channel.send(embed=embed, view=view)
+            msg = await channel.send(embed=embed, view=view, **{"file": art_file} if art_file else {})
             view.message = msg
             _guild_last_spawn[gid] = now
             mode = "active" if is_active else "idle"
@@ -2816,6 +2829,7 @@ class CardSelectView(discord.ui.View):
             display_name = f"{card['name']} ({card['code']})" if self.card_type == "driver" else card["name"]
             stats = f"Skill: {card['skill']}/10 | Team: {card['team']}" if self.card_type == "driver" else f"{card['top_speed']}km/h | Handling: {card.get('handling', '?')} | Team: {card['team']}"
 
+            art_file = make_card_art_file(card)
             embed = discord.Embed(
                 title=f"✅ {self.card_type.title()} Equipped!",
                 description=f"{icon} {emoji} **{display_name}** is now your active {self.card_type}!",
@@ -2825,14 +2839,21 @@ class CardSelectView(discord.ui.View):
             embed.add_field(name="Rarity", value=f"{emoji} {card['rarity'].title()}", inline=True)
             if card.get("perks"):
                 embed.add_field(name="✨ Perk", value=card["perks"][0].replace("_", " ").title(), inline=True)
-            img = f1_images.get_card_image(card)
-            if img:
-                embed.set_image(url=img)
-            embed.set_footer(text="Your equipped card will be used in your next !race")
+            if art_file:
+                embed.set_image(url=f"attachment://{art_file.filename}")
+            else:
+                img = f1_images.get_card_image(card)
+                if img:
+                    embed.set_image(url=img)
+            embed.set_footer(text="Your equipped card will be used in your next race")
         else:
+            art_file = None
             embed = discord.Embed(title="❌ Error", description="Could not equip that card.", color=0xE74C3C)
 
-        await interaction.response.edit_message(embed=embed, view=None)
+        if art_file:
+            await interaction.response.edit_message(embed=embed, view=None, attachments=[art_file])
+        else:
+            await interaction.response.edit_message(embed=embed, view=None)
 
     async def _on_quit(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
@@ -3064,12 +3085,19 @@ class CollectionView(discord.ui.View):
 
         detail = discord.Embed(title=title, description=stats, color=color)
 
-        img = f1_images.get_card_image(card)
-        if img:
-            detail.set_image(url=img)
+        art_file = make_card_art_file(card)
+        if art_file:
+            detail.set_image(url=f"attachment://{art_file.filename}")
+        else:
+            img = f1_images.get_card_image(card)
+            if img:
+                detail.set_image(url=img)
 
         detail.set_footer(text=format_card_footer(card))
-        await interaction.response.send_message(embed=detail)
+        if art_file:
+            await interaction.response.send_message(embed=detail, file=art_file)
+        else:
+            await interaction.response.send_message(embed=detail)
 
     async def _on_quit(self, interaction: discord.Interaction):
         if not await self._check(interaction): return

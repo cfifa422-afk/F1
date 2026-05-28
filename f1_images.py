@@ -130,4 +130,26 @@ def get_card_image(card: dict) -> Optional[str]:
     return None
 
 
+# ==================== LOCAL CARD ART ====================
+# Custom card artwork stored locally in card_images/
+# Keyed by driver code — add more entries as new art is uploaded.
+
+DRIVER_CARD_ART: Dict[str, str] = {
+    "ZHO": "card_images/ZHO.png",
+    "SAR": "card_images/SAR.png",
+    "ALB": "card_images/ALB.png",
+    "VER": "card_images/VER.png",
+    "GRO": "card_images/GRO.png",
+    "MAG": "card_images/MAG.png",
+    "SAI": "card_images/SAI.png",
+}
+
+
+def get_card_art_path(card: dict) -> Optional[str]:
+    """Return the local file path for a card's custom art, or None if not available."""
+    if card.get("type") == "driver":
+        return DRIVER_CARD_ART.get(card.get("code", ""))
+    return None
+
+
 TOTAL_IMAGES = len(DRIVER_IMAGES) + len(set(CAR_IMAGES.values())) + len(TEAM_ASSET_IMAGES)
