@@ -896,9 +896,13 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
             )
             card_display_id = f"#{self.card.get('id', '?').upper()}"
             await interaction.response.edit_message(view=self.spawn_view)
+            if self.card["type"] == "car":
+                extra = "🔧 You caught a mechanic card! Use `/team` to equip it to your team."
+            else:
+                extra = "Added to your collection. Use `/f1 equip` to race with it."
             await interaction.followup.send(
                 f"{interaction.user.mention} You caught **{display}**! ({card_display_id},  {rarity_label})\n"
-                f"Added to your collection. Use `/f1 equip` to race with it."
+                f"{extra}"
             )
             self.spawn_view.stop()
         else:
