@@ -3235,45 +3235,45 @@ class CollectionView(discord.ui.View):
             await interaction.response.send_message("Card not found.", ephemeral=True)
             return
 
-        color = card_module.RARITY_COLORS.get(card["rarity"], 0x95A5A6)
-        equipped = db.get_equipped(self.player_id)
-        is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
+        # Build plain-text header (no embed)
+        card_display_id = card.get("id", "?").upper()
+        caught_raw = card.get("caught_at") or card.get("obtained_at")
+        caught_line = ""
+        if caught_raw:
+            try:
+                caught_dt = datetime.fromisoformat(str(caught_raw))
+                delta = datetime.now() - caught_dt
+                if delta.days == 0:
+                    hours = delta.seconds // 3600
+                    rel = f"{hours} hour{'s' if hours != 1 else ''} ago" if hours > 0 else "just now"
+                elif delta.days == 1:
+                    rel = "1 day ago"
+                else:
+                    rel = f"{delta.days} days ago"
+                caught_str = caught_dt.strftime("%b %d, %Y %I:%M %p")
+                caught_line = f"Caught on {caught_str} ({rel})"
+            except Exception:
+                caught_line = ""
 
-        if card["type"] == "driver":
-            title = f"👤 {card['name']} ({card['code']})"
-            stats = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {card['rarity'].title()}"
-        elif card["type"] == "car":
-            title = f"🏎️ {card['name']}"
-            stats = f"{card['team']}  ·  {card['top_speed']} km/h  ·  Handling {card.get('handling', '?')}/10  ·  {card['rarity'].title()}"
-        else:
-            title = f"🏗️ {card['name']}"
-            role = card.get("role", "Team Asset")
-            effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(card.get("effect", ""), card.get("effect", ""))
-            bonus = card.get("bonus", 0)
-            effect = card.get("effect", "")
-            bonus_str = f"-{bonus:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{bonus:.0%}"
-            stats = f"{card['team']}  ·  {role}  ·  {card['rarity'].title()}\n{effect_label}: **{bonus_str}**  ·  {card.get('description', '')}"
+        player_data = db.get_player(self.player_id)
+        total_races = player_data.get("stats", {}).get("total_races", 0) if player_data else 0
 
-        if is_equipped:
-            stats += "  ·  ✅ Equipped"
-
-        if card.get("perks"):
-            perk_key = card["perks"][0]
-            perk_data = card_module.PERKS.get(perk_key, {})
-            stats += f"\n✨ {perk_data.get('name', perk_key)} — {perk_data.get('description', '')}"
-
-        detail = discord.Embed(title=title, description=stats, color=color)
-        detail.set_footer(text=format_card_footer(card))
+        lines = [f"ID: #{card_display_id}"]
+        if caught_line:
+            lines.append(caught_line)
+        lines.append(f"Matches played: {total_races}")
+        content = "\n".join(lines)
 
         art_file = make_card_art_file(card)
-        if art_file:
-            detail.set_image(url=f"attachment://{art_file.filename}")
-
         back_view = CardDetailView(self)
         if art_file:
-            await interaction.response.edit_message(embed=detail, view=back_view, attachments=[art_file])
+            await interaction.response.edit_message(
+                content=content, embed=None, view=back_view, attachments=[art_file]
+            )
         else:
-            await interaction.response.edit_message(embed=detail, view=back_view, attachments=[])
+            await interaction.response.edit_message(
+                content=content, embed=None, view=back_view, attachments=[]
+            )
 
     async def _on_quit(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
