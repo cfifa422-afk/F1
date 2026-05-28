@@ -4,13 +4,14 @@ from discord import app_commands
 import asyncio
 import os
 from datetime import datetime
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Literal
 import random
 
 from database import Database, UPGRADE_STATS, UPGRADE_COSTS, UPGRADE_MAX_LEVEL, UPGRADE_INFO
 import cards as card_module
 import f1_images
 import commentary as commentary_engine
+import card_manager as cm
 
 # ==================== BOT SETUP ====================
 
@@ -1082,6 +1083,156 @@ async def config_channels_list(interaction: discord.Interaction):
         )
         embed.set_footer(text="Cards spawn every 30 minutes in one of these channels.")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ==================== CARD MANAGEMENT (ADMIN) ====================
+
+@config_group.command(name="adddriver", description="Add a custom driver card to the spawn/pack pool")
+@app_commands.describe(
+    name="Full driver name (e.g. Kimi Antonelli)",
+    code="3-letter code used for image lookup (e.g. ANT)",
+    skill="Skill rating 1.0 – 10.0",
+    team="Team name (e.g. Mercedes)",
+    rarity="Card rarity tier",
+    image="Card art PNG (transparent background recommended)",
+)
+async def config_adddriver(
+    interaction: discord.Interaction,
+    name: str,
+    code: str,
+    skill: float,
+    team: str,
+    rarity: Literal["common", "rare", "epic", "legendary"],
+    image: Optional[discord.Attachment] = None,
+):
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    # Save image if provided
+    if image:
+        ext = os.path.splitext(image.filename)[1] or ".png"
+        img_path = f"card_images/{code.upper()}{ext}"
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image.url) as resp:
+                if resp.status == 200:
+                    with open(img_path, "wb") as f:
+                        f.write(await resp.read())
+    entry = cm.add_driver(name, code, skill, team, rarity)
+    color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
+    emoji = card_module.RARITY_EMOJIS.get(rarity, "")
+    embed = discord.Embed(
+        title="✅ Driver Card Added",
+        description=f"{emoji} **{entry['name']}** (`{entry['code']}`) — {rarity.title()}\n"
+                    f"Team: {team}  ·  Skill: {skill}/10",
+        color=color,
+    )
+    if image:
+        embed.set_footer(text=f"Image saved as card_images/{code.upper()}{ext}")
+    else:
+        embed.set_footer(text="No image provided — card will appear without art until one is uploaded.")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@config_group.command(name="addcar", description="Add a custom car card to the spawn/pack pool")
+@app_commands.describe(
+    name="Full car name (e.g. Williams FW47)",
+    team="Team name (e.g. Williams)",
+    top_speed="Top speed in km/h (e.g. 355)",
+    handling="Handling rating 1.0 – 10.0",
+    rarity="Card rarity tier",
+    image="Card art PNG (transparent background recommended)",
+)
+async def config_addcar(
+    interaction: discord.Interaction,
+    name: str,
+    team: str,
+    top_speed: int,
+    handling: float,
+    rarity: Literal["common", "rare", "epic", "legendary"],
+    image: Optional[discord.Attachment] = None,
+):
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    if image:
+        slug = name.replace(" ", "_").replace("+", "plus")
+        ext = os.path.splitext(image.filename)[1] or ".png"
+        img_path = f"card_images/cars/{slug}{ext}"
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image.url) as resp:
+                if resp.status == 200:
+                    with open(img_path, "wb") as f:
+                        f.write(await resp.read())
+    entry = cm.add_car(name, team, top_speed, handling, rarity)
+    color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
+    emoji = card_module.RARITY_EMOJIS.get(rarity, "")
+    embed = discord.Embed(
+        title="✅ Car Card Added",
+        description=f"{emoji} **{entry['name']}** — {rarity.title()}\n"
+                    f"Team: {team}  ·  Top Speed: {top_speed} km/h  ·  Handling: {handling}/10",
+        color=color,
+    )
+    if image:
+        embed.set_footer(text=f"Image saved to card_images/cars/")
+    else:
+        embed.set_footer(text="No image provided — card will appear without art until one is uploaded.")
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@config_group.command(name="listcards", description="List all custom cards in the pool")
+async def config_listcards(interaction: discord.Interaction):
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+        return
+    data = cm.list_all()
+    drivers = data.get("drivers", [])
+    cars = data.get("cars", [])
+    embed = discord.Embed(title="📋 Custom Cards", color=0x5865F2)
+    if drivers:
+        lines = []
+        for d in drivers:
+            emoji = card_module.RARITY_EMOJIS.get(d["rarity"], "")
+            lines.append(f"{emoji} **{d['name']}** (`{d['code']}`) — {d['rarity'].title()} | {d['team']} | Skill {d['skill']}")
+        embed.add_field(name="👤 Drivers", value="\n".join(lines), inline=False)
+    if cars:
+        lines = []
+        for c in cars:
+            emoji = card_module.RARITY_EMOJIS.get(c["rarity"], "")
+            lines.append(f"{emoji} **{c['name']}** — {c['rarity'].title()} | {c['team']} | {c['top_speed']} km/h")
+        embed.add_field(name="🏎️ Cars", value="\n".join(lines), inline=False)
+    if not drivers and not cars:
+        embed.description = "No custom cards yet.\nUse `/config adddriver` or `/config addcar` to add some!"
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@config_group.command(name="removedriver", description="Remove a custom driver card by code")
+@app_commands.describe(code="3-letter driver code (e.g. ANT)")
+async def config_removedriver(interaction: discord.Interaction, code: str):
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+        return
+    removed = cm.remove_driver(code)
+    if removed:
+        await interaction.response.send_message(f"✅ Driver `{code.upper()}` removed from custom pool.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ No custom driver with code `{code.upper()}` found.", ephemeral=True)
+
+
+@config_group.command(name="removecar", description="Remove a custom car card by name")
+@app_commands.describe(name="Exact car name (e.g. Williams FW47)")
+async def config_removecar(interaction: discord.Interaction, name: str):
+    if not _is_admin(interaction):
+        await interaction.response.send_message("❌ Admin only.", ephemeral=True)
+        return
+    removed = cm.remove_car(name)
+    if removed:
+        await interaction.response.send_message(f"✅ Car **{name}** removed from custom pool.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"❌ No custom car named **{name}** found.", ephemeral=True)
 
 
 # ==================== PACK SLASH COMMANDS ====================

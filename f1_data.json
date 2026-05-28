@@ -4,7 +4,7 @@
       "id": "1141690369445216326",
       "username": "krazymatrix_",
       "created_at": "2026-05-28T05:08:54.230943",
-      "coins": 9000,
+      "coins": 250,
       "equipped": {
         "driver_id": "starter_driver_1141690369445216326",
         "car_id": "starter_car_1141690369445216326",
@@ -64,18 +64,6 @@
             "caught_at": "2026-05-28T05:14:27.766806"
           },
           {
-            "id": "6B6F1BC",
-            "type": "driver",
-            "name": "Lance Stroll",
-            "code": "STR",
-            "skill": 6.5,
-            "team": "Aston Martin",
-            "rarity": "common",
-            "perks": [],
-            "obtained_at": "2026-05-28T05:14:27.776835",
-            "caught_at": "2026-05-28T05:14:27.776835"
-          },
-          {
             "id": "E3BFA29",
             "type": "driver",
             "name": "Juan Manuel Fangio",
@@ -128,44 +116,6 @@
             "caught_at": "2026-05-28T05:18:23.495860"
           },
           {
-            "id": "164168C",
-            "type": "driver",
-            "name": "Esteban Ocon",
-            "code": "OCO",
-            "skill": 7.1,
-            "team": "Alpine",
-            "rarity": "rare",
-            "perks": [],
-            "obtained_at": "2026-05-28T05:18:23.506079",
-            "caught_at": "2026-05-28T05:18:23.506079"
-          },
-          {
-            "id": "F862636",
-            "type": "driver",
-            "name": "Valtteri Bottas",
-            "code": "BOT",
-            "skill": 7.4,
-            "team": "Alfa Romeo",
-            "rarity": "rare",
-            "perks": [],
-            "obtained_at": "2026-05-28T05:18:23.517069",
-            "caught_at": "2026-05-28T05:18:23.517069"
-          },
-          {
-            "id": "FB265C3",
-            "type": "driver",
-            "name": "Esteban Ocon",
-            "code": "OCO",
-            "skill": 7.1,
-            "team": "Alpine",
-            "rarity": "rare",
-            "perks": [
-              "tire_master"
-            ],
-            "obtained_at": "2026-05-28T05:19:12.714805",
-            "caught_at": "2026-05-28T05:19:12.714805"
-          },
-          {
             "id": "18F5225",
             "type": "driver",
             "name": "Damon Hill",
@@ -178,18 +128,6 @@
             ],
             "obtained_at": "2026-05-28T05:19:37.528761",
             "caught_at": "2026-05-28T05:19:37.528761"
-          },
-          {
-            "id": "3F85082",
-            "type": "driver",
-            "name": "Pierre Gasly",
-            "code": "GAS",
-            "skill": 7.3,
-            "team": "Alpine",
-            "rarity": "rare",
-            "perks": [],
-            "obtained_at": "2026-05-28T05:19:37.560682",
-            "caught_at": "2026-05-28T05:19:37.560682"
           },
           {
             "id": "AEA7279",
@@ -230,6 +168,56 @@
             "perks": [],
             "obtained_at": "2026-05-28T05:20:53.962433",
             "caught_at": "2026-05-28T05:20:53.962433"
+          },
+          {
+            "id": "E4C5290",
+            "type": "driver",
+            "name": "Max Verstappen",
+            "code": "VER",
+            "skill": 9.2,
+            "team": "Red Bull",
+            "rarity": "legendary",
+            "perks": [],
+            "obtained_at": "2026-05-28T08:28:45.445721",
+            "caught_at": "2026-05-28T08:28:45.445721"
+          },
+          {
+            "id": "E7C7A62",
+            "type": "driver",
+            "name": "Carlos Sainz",
+            "code": "SAI",
+            "skill": 7.9,
+            "team": "Ferrari",
+            "rarity": "epic",
+            "perks": [
+              "fuel_saver"
+            ],
+            "obtained_at": "2026-05-28T08:31:24.901735",
+            "caught_at": "2026-05-28T08:31:24.901735"
+          },
+          {
+            "id": "1206344",
+            "type": "driver",
+            "name": "Sergio Perez",
+            "code": "PER",
+            "skill": 7.6,
+            "team": "Red Bull",
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-28T08:32:30.110037",
+            "caught_at": "2026-05-28T08:32:30.110037"
+          },
+          {
+            "id": "3773D04",
+            "type": "driver",
+            "name": "Logan Sargeant",
+            "code": "SAR",
+            "skill": 6.1,
+            "team": "Williams",
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-28T08:32:30.111761",
+            "caught_at": "2026-05-28T08:32:30.111761"
           }
         ],
         "cars": [
@@ -256,18 +244,6 @@
             "perks": [],
             "obtained_at": "2026-05-28T05:10:20.394069",
             "caught_at": "2026-05-28T05:10:20.394069"
-          },
-          {
-            "id": "0987C4C",
-            "type": "car",
-            "name": "Williams FW44",
-            "team": "Williams",
-            "top_speed": 338,
-            "handling": 6.2,
-            "rarity": "common",
-            "perks": [],
-            "obtained_at": "2026-05-28T05:14:27.776080",
-            "caught_at": "2026-05-28T05:14:27.776080"
           },
           {
             "id": "8EDFACB",
@@ -354,20 +330,6 @@
             "caught_at": "2026-05-28T05:19:37.559258"
           },
           {
-            "id": "D926039",
-            "type": "car",
-            "name": "Williams FW44",
-            "team": "Williams",
-            "top_speed": 338,
-            "handling": 6.2,
-            "rarity": "common",
-            "perks": [
-              "rain_master"
-            ],
-            "obtained_at": "2026-05-28T05:19:37.562365",
-            "caught_at": "2026-05-28T05:19:37.562365"
-          },
-          {
             "id": "DCE5F2C",
             "type": "car",
             "name": "McLaren MCL60S",
@@ -378,18 +340,6 @@
             "perks": [],
             "obtained_at": "2026-05-28T05:20:01.170319",
             "caught_at": "2026-05-28T05:20:01.170319"
-          },
-          {
-            "id": "8590DD4",
-            "type": "car",
-            "name": "AlphaTauri AT04",
-            "team": "RB",
-            "top_speed": 358,
-            "handling": 7.1,
-            "rarity": "rare",
-            "perks": [],
-            "obtained_at": "2026-05-28T05:20:01.172032",
-            "caught_at": "2026-05-28T05:20:01.172032"
           },
           {
             "id": "098C2FB",
@@ -426,6 +376,84 @@
             "perks": [],
             "obtained_at": "2026-05-28T05:20:53.959449",
             "caught_at": "2026-05-28T05:20:53.959449"
+          },
+          {
+            "id": "000906D",
+            "type": "car",
+            "name": "Ferrari F1-75",
+            "team": "Ferrari",
+            "top_speed": 387,
+            "handling": 8.4,
+            "rarity": "epic",
+            "perks": [
+              "rain_master"
+            ],
+            "obtained_at": "2026-05-28T08:28:45.442339",
+            "caught_at": "2026-05-28T08:28:45.442339"
+          },
+          {
+            "id": "06BD6AF",
+            "type": "car",
+            "name": "Red Bull RB19",
+            "team": "Red Bull",
+            "top_speed": 410,
+            "handling": 9.4,
+            "rarity": "legendary",
+            "perks": [
+              "tire_master"
+            ],
+            "obtained_at": "2026-05-28T08:28:45.447446",
+            "caught_at": "2026-05-28T08:28:45.447446"
+          },
+          {
+            "id": "22F6741",
+            "type": "car",
+            "name": "Red Bull RB18",
+            "team": "Red Bull",
+            "top_speed": 390,
+            "handling": 8.8,
+            "rarity": "epic",
+            "perks": [
+              "tire_master"
+            ],
+            "obtained_at": "2026-05-28T08:31:24.912193",
+            "caught_at": "2026-05-28T08:31:24.912193"
+          },
+          {
+            "id": "17ABB7D",
+            "type": "car",
+            "name": "Red Bull RB18",
+            "team": "Red Bull",
+            "top_speed": 390,
+            "handling": 8.8,
+            "rarity": "epic",
+            "perks": [],
+            "obtained_at": "2026-05-28T08:32:30.096708",
+            "caught_at": "2026-05-28T08:32:30.096708"
+          },
+          {
+            "id": "ABF6091",
+            "type": "car",
+            "name": "Williams FW45",
+            "team": "Williams",
+            "top_speed": 360,
+            "handling": 7.3,
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-28T08:32:30.123298",
+            "caught_at": "2026-05-28T08:32:30.123298"
+          },
+          {
+            "id": "CBFE264",
+            "type": "car",
+            "name": "Alpine A523",
+            "team": "Alpine",
+            "top_speed": 368,
+            "handling": 7.6,
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-28T08:32:30.124622",
+            "caught_at": "2026-05-28T08:32:30.124622"
           }
         ],
         "team_assets": [
@@ -456,82 +484,30 @@
             "caught_at": "2026-05-28T05:17:44.664957"
           },
           {
-            "id": "9519CF6",
+            "id": "249BD20",
             "type": "team_asset",
-            "name": "Williams Engineers",
-            "role": "Race Engineers",
-            "team": "Williams",
-            "effect": "fuel_efficiency",
-            "bonus": 0.08,
-            "description": "+8% fuel efficiency",
-            "rarity": "rare",
-            "obtained_at": "2026-05-28T05:18:23.517744",
-            "caught_at": "2026-05-28T05:18:23.517744"
-          },
-          {
-            "id": "1D2CED8",
-            "type": "team_asset",
-            "name": "Williams Engineers",
-            "role": "Race Engineers",
-            "team": "Williams",
-            "effect": "fuel_efficiency",
-            "bonus": 0.08,
-            "description": "+8% fuel efficiency",
-            "rarity": "rare",
-            "obtained_at": "2026-05-28T05:19:12.715694",
-            "caught_at": "2026-05-28T05:19:12.715694"
-          },
-          {
-            "id": "7ED3AED",
-            "type": "team_asset",
-            "name": "Alfa Romeo Engineers",
-            "role": "Engineers",
-            "team": "Alfa Romeo",
-            "effect": "fuel_efficiency",
-            "bonus": 0.05,
-            "description": "+5% fuel efficiency",
-            "rarity": "common",
-            "obtained_at": "2026-05-28T05:19:12.717040",
-            "caught_at": "2026-05-28T05:19:12.717040"
-          },
-          {
-            "id": "D684F5E",
-            "type": "team_asset",
-            "name": "McLaren Mechanics",
-            "role": "Mechanics",
-            "team": "McLaren",
+            "name": "Pirelli Engineers",
+            "role": "Tyre Specialists",
+            "team": "Pirelli",
             "effect": "tire_wear",
-            "bonus": 0.1,
-            "description": "-10% tyre degradation rate",
-            "rarity": "rare",
-            "obtained_at": "2026-05-28T05:19:37.544305",
-            "caught_at": "2026-05-28T05:19:37.544305"
+            "bonus": 0.2,
+            "description": "-20% tyre degradation rate",
+            "rarity": "epic",
+            "obtained_at": "2026-05-28T08:28:45.448785",
+            "caught_at": "2026-05-28T08:28:45.448785"
           },
           {
-            "id": "D63B95C",
+            "id": "102DAFC",
             "type": "team_asset",
-            "name": "Williams Engineers",
-            "role": "Race Engineers",
-            "team": "Williams",
-            "effect": "fuel_efficiency",
-            "bonus": 0.08,
-            "description": "+8% fuel efficiency",
-            "rarity": "rare",
-            "obtained_at": "2026-05-28T05:20:01.174364",
-            "caught_at": "2026-05-28T05:20:01.174364"
-          },
-          {
-            "id": "75F6149",
-            "type": "team_asset",
-            "name": "Alpine Pit Crew",
+            "name": "Red Bull Pit Crew",
             "role": "Pit Crew",
-            "team": "Alpine",
+            "team": "Red Bull",
             "effect": "pit_time",
-            "bonus": 0.3,
-            "description": "-0.3s off every pit stop",
-            "rarity": "rare",
-            "obtained_at": "2026-05-28T05:20:53.961369",
-            "caught_at": "2026-05-28T05:20:53.961369"
+            "bonus": 0.6,
+            "description": "-0.6s off every pit stop",
+            "rarity": "epic",
+            "obtained_at": "2026-05-28T08:31:24.928490",
+            "caught_at": "2026-05-28T08:31:24.928490"
           }
         ]
       },

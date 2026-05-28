@@ -1,48 +1,55 @@
 import random
 from datetime import datetime
 from typing import List, Dict, Optional
+import card_manager as _cm
 
 # ==================== DRIVER CARDS ====================
 
 DRIVERS = {
     "legendary": [
-        {"name": "Lewis Hamilton", "code": "HAM", "skill": 8.8, "team": "Ferrari"},
-        {"name": "Max Verstappen", "code": "VER", "skill": 9.2, "team": "Red Bull"},
-        {"name": "Lando Norris", "code": "NOR", "skill": 8.7, "team": "McLaren"},
-        {"name": "Ayrton Senna", "code": "SEN", "skill": 9.5, "team": "McLaren"},
-        {"name": "Michael Schumacher", "code": "MSC", "skill": 9.4, "team": "Ferrari"},
-        {"name": "Alain Prost", "code": "PRO", "skill": 9.1, "team": "McLaren"},
-        {"name": "Niki Lauda", "code": "NIK", "skill": 9.0, "team": "Ferrari"},
-        {"name": "Juan Manuel Fangio", "code": "FAN", "skill": 9.6, "team": "Mercedes"},
+        {"name": "Lewis Hamilton",      "code": "HAM", "skill": 8.8, "team": "Ferrari"},
+        {"name": "Max Verstappen",      "code": "VER", "skill": 9.2, "team": "Red Bull"},
+        {"name": "Lando Norris",        "code": "NOR", "skill": 8.7, "team": "McLaren"},
+        {"name": "Ayrton Senna",        "code": "SEN", "skill": 9.5, "team": "McLaren"},
+        {"name": "Michael Schumacher",  "code": "MSC", "skill": 9.4, "team": "Ferrari"},
+        {"name": "Alain Prost",         "code": "PRO", "skill": 9.1, "team": "McLaren"},
+        {"name": "Niki Lauda",          "code": "NIK", "skill": 9.0, "team": "Ferrari"},
+        {"name": "Juan Manuel Fangio",  "code": "FAN", "skill": 9.6, "team": "Mercedes"},
     ],
     "epic": [
-        {"name": "Charles Leclerc", "code": "LEC", "skill": 8.3, "team": "Ferrari"},
-        {"name": "George Russell", "code": "RUS", "skill": 8.1, "team": "Mercedes"},
-        {"name": "Carlos Sainz", "code": "SAI", "skill": 7.9, "team": "Ferrari"},
-        {"name": "Fernando Alonso", "code": "ALO", "skill": 8.0, "team": "Aston Martin"},
-        {"name": "Oscar Piastri", "code": "PIA", "skill": 7.8, "team": "McLaren"},
-        {"name": "Jim Clark", "code": "CLK", "skill": 8.9, "team": "Lotus"},
-        {"name": "Nigel Mansell", "code": "MAN", "skill": 8.4, "team": "Williams"},
-        {"name": "Damon Hill", "code": "HIL", "skill": 8.2, "team": "Williams"},
-        {"name": "Nico Rosberg", "code": "ROS", "skill": 8.0, "team": "Mercedes"},
-        {"name": "Jenson Button", "code": "BUT", "skill": 7.9, "team": "Brawn GP"},
-        {"name": "Kimi Raikkonen", "code": "RAI", "skill": 8.3, "team": "Ferrari"},
+        {"name": "Charles Leclerc",   "code": "LEC", "skill": 8.3, "team": "Ferrari"},
+        {"name": "George Russell",    "code": "RUS", "skill": 8.1, "team": "Mercedes"},
+        {"name": "Carlos Sainz",      "code": "SAI", "skill": 7.9, "team": "Williams"},
+        {"name": "Fernando Alonso",   "code": "ALO", "skill": 8.0, "team": "Aston Martin"},
+        {"name": "Oscar Piastri",     "code": "PIA", "skill": 7.8, "team": "McLaren"},
+        {"name": "Jim Clark",         "code": "CLK", "skill": 8.9, "team": "Lotus"},
+        {"name": "Nigel Mansell",     "code": "MAN", "skill": 8.4, "team": "Williams"},
+        {"name": "Damon Hill",        "code": "HIL", "skill": 8.2, "team": "Williams"},
+        {"name": "Nico Rosberg",      "code": "ROS", "skill": 8.0, "team": "Mercedes"},
+        {"name": "Jenson Button",     "code": "BUT", "skill": 7.9, "team": "Brawn GP"},
+        {"name": "Kimi Raikkonen",    "code": "RAI", "skill": 8.3, "team": "Ferrari"},
     ],
     "rare": [
-        {"name": "Yuki Tsunoda", "code": "TSU", "skill": 7.2, "team": "RB"},
-        {"name": "Pierre Gasly", "code": "GAS", "skill": 7.3, "team": "Alpine"},
-        {"name": "Esteban Ocon", "code": "OCO", "skill": 7.1, "team": "Alpine"},
-        {"name": "Valtteri Bottas", "code": "BOT", "skill": 7.4, "team": "Alfa Romeo"},
-        {"name": "Kevin Magnussen", "code": "MAG", "skill": 7.0, "team": "Haas"},
-        {"name": "Sergio Perez", "code": "PER", "skill": 7.6, "team": "Red Bull"},
-        {"name": "Mark Webber", "code": "WEB", "skill": 7.8, "team": "Red Bull"},
+        {"name": "Yuki Tsunoda",        "code": "TSU", "skill": 7.2, "team": "RB"},
+        {"name": "Pierre Gasly",        "code": "GAS", "skill": 7.3, "team": "Alpine"},
+        {"name": "Esteban Ocon",        "code": "OCO", "skill": 7.1, "team": "Haas"},
+        {"name": "Valtteri Bottas",     "code": "BOT", "skill": 7.4, "team": "Kick Sauber"},
+        {"name": "Kevin Magnussen",     "code": "MAG", "skill": 7.0, "team": "Haas"},
+        {"name": "Sergio Perez",        "code": "PER", "skill": 7.6, "team": "Red Bull"},
+        {"name": "Mark Webber",         "code": "WEB", "skill": 7.8, "team": "Red Bull"},
+        {"name": "Kimi Antonelli",      "code": "ANT", "skill": 7.4, "team": "Mercedes"},
+        {"name": "Oliver Bearman",      "code": "BEA", "skill": 7.3, "team": "Haas"},
+        {"name": "Gabriel Bortoleto",   "code": "BOR", "skill": 7.5, "team": "Kick Sauber"},
+        {"name": "Liam Lawson",         "code": "LAW", "skill": 7.6, "team": "Red Bull"},
     ],
     "common": [
-        {"name": "Lance Stroll", "code": "STR", "skill": 6.5, "team": "Aston Martin"},
-        {"name": "Alex Albon", "code": "ALB", "skill": 6.8, "team": "Williams"},
-        {"name": "Nico Hulkenberg", "code": "HUL", "skill": 6.9, "team": "Haas"},
-        {"name": "Zhou Guanyu", "code": "ZHO", "skill": 6.4, "team": "Alfa Romeo"},
-        {"name": "Logan Sargeant", "code": "SAR", "skill": 6.1, "team": "Williams"},
+        {"name": "Lance Stroll",    "code": "STR", "skill": 6.5, "team": "Aston Martin"},
+        {"name": "Alex Albon",      "code": "ALB", "skill": 6.8, "team": "Williams"},
+        {"name": "Nico Hulkenberg", "code": "HUL", "skill": 6.9, "team": "Kick Sauber"},
+        {"name": "Zhou Guanyu",     "code": "ZHO", "skill": 6.4, "team": "Kick Sauber"},
+        {"name": "Logan Sargeant",  "code": "SAR", "skill": 6.1, "team": "Williams"},
+        {"name": "Jack Doohan",     "code": "DOO", "skill": 6.6, "team": "Alpine"},
+        {"name": "Isack Hadjar",    "code": "HAD", "skill": 6.7, "team": "RB"},
     ],
 }
 
@@ -256,9 +263,10 @@ def _generate_card(rarity: str) -> Dict:
     card_type = random.choice(["driver", "car"])
 
     if card_type == "driver":
-        pool = DRIVERS.get(rarity, DRIVERS["common"])
+        pool = list(DRIVERS.get(rarity, DRIVERS["common"]))
+        pool.extend(_cm.get_drivers_by_rarity(rarity))
         if not pool:
-            pool = DRIVERS["common"]
+            pool = list(DRIVERS["common"])
         driver = random.choice(pool)
         perks = [random.choice(list(PERKS.keys()))] if random.random() < 0.30 else []
         return {
@@ -273,9 +281,10 @@ def _generate_card(rarity: str) -> Dict:
             "obtained_at": datetime.now().isoformat(),
         }
     else:
-        pool = CARS.get(rarity, CARS["common"])
+        pool = list(CARS.get(rarity, CARS["common"]))
+        pool.extend(_cm.get_cars_by_rarity(rarity))
         if not pool:
-            pool = CARS["common"]
+            pool = list(CARS["common"])
         car = random.choice(pool)
         perks = [random.choice(list(PERKS.keys()))] if random.random() < 0.25 else []
         return {
