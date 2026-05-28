@@ -213,10 +213,8 @@ SPAWN_TEAM_CHANCE = 0.25  # 25% of wild spawns are team assets
 
 
 def generate_spawn_card() -> Dict:
-    """Generate a single wild card — 25% chance it's a team asset."""
+    """Generate a single wild card — always a driver or car (no team assets in wild spawns)."""
     rarity = _roll_rarity(SPAWN_ODDS)
-    if random.random() < SPAWN_TEAM_CHANCE:
-        return generate_team_asset(rarity)
     return _generate_card(rarity)
 
 # ==================== RARITY DISPLAY ====================

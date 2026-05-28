@@ -509,7 +509,7 @@ class PackOpeningView(discord.ui.View):
         embed.set_footer(text=f"Pack opened by {self.user.display_name}")
         return embed
 
-    def card_embed(self, card: Dict, position: int) -> discord.Embed:
+    def card_embed(self, card: Dict, position: int, art_file=None) -> discord.Embed:
         total = len(self.cards)
         rarity = card["rarity"]
         color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
@@ -540,9 +540,8 @@ class PackOpeningView(discord.ui.View):
             description=f"## {headline}\n{emoji}  **{rarity.upper()}**\n{stats}",
             color=color,
         )
-        img = f1_images.get_card_image(card)
-        if img:
-            embed.set_image(url=img)
+        if art_file:
+            embed.set_image(url=f"attachment://{art_file.filename}")
         if remaining > 0:
             embed.set_footer(text=f"{remaining} more card{'s' if remaining != 1 else ''} to go →")
         else:
@@ -576,13 +575,18 @@ class PackOpeningView(discord.ui.View):
         total = len(self.cards)
         if self.index >= total:
             button.disabled = True
-            await interaction.response.edit_message(embed=self.summary_embed(), view=self)
+            await interaction.response.edit_message(embed=self.summary_embed(), view=self, attachments=[])
             self.stop()
             return
         card = self.cards[self.index]
         self.index += 1
         self._refresh_button()
-        await interaction.response.edit_message(embed=self.card_embed(card, self.index), view=self)
+        art_file = make_card_art_file(card)
+        embed = self.card_embed(card, self.index, art_file)
+        if art_file:
+            await interaction.response.edit_message(embed=embed, view=self, attachments=[art_file])
+        else:
+            await interaction.response.edit_message(embed=embed, view=self, attachments=[])
 
 
 # ==================== RACE VISUAL HELPERS ====================
@@ -979,7 +983,10 @@ async def spawn_wild_card():
             if art_file:
                 embed.set_image(url=f"attachment://{art_file.filename}")
             view = SpawnView(card)
-            msg = await channel.send(embed=embed, view=view, **{"file": art_file} if art_file else {})
+            if art_file:
+                msg = await channel.send(embed=embed, view=view, file=art_file)
+            else:
+                msg = await channel.send(embed=embed, view=view)
             view.message = msg
             _guild_last_spawn[gid] = now
             mode = "active" if is_active else "idle"
@@ -2857,6 +2864,25 @@ class CardSelectView(discord.ui.View):
         await interaction.response.edit_message(content="Menu closed.", embed=None, view=None)
 
 
+class CardDetailView(discord.ui.View):
+    """Shown after selecting a card in the collection — has a back button."""
+
+    def __init__(self, collection_view: "CollectionView"):
+        super().__init__(timeout=120)
+        self.collection_view = collection_view
+
+    @discord.ui.button(label="◀ Back to Collection", style=discord.ButtonStyle.secondary)
+    async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if str(interaction.user.id) != self.collection_view.player_id:
+            await interaction.response.send_message("This isn't your collection!", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            embed=self.collection_view.build_embed(),
+            view=self.collection_view,
+            attachments=[],
+        )
+
+
 class CollectionView(discord.ui.View):
     def __init__(self, player_id: str, all_cards: List[Dict], display_name: str, per_page: int = 5):
         super().__init__(timeout=120)
@@ -3059,18 +3085,19 @@ class CollectionView(discord.ui.View):
         is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
 
         if card["type"] == "driver":
-            title = f"{card['name']} ({card['code']})"
+            title = f"👤 {card['name']} ({card['code']})"
             stats = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {card['rarity'].title()}"
         elif card["type"] == "car":
-            title = card["name"]
+            title = f"🏎️ {card['name']}"
             stats = f"{card['team']}  ·  {card['top_speed']} km/h  ·  Handling {card.get('handling', '?')}/10  ·  {card['rarity'].title()}"
         else:
-            title = card["name"]
+            title = f"🏗️ {card['name']}"
             role = card.get("role", "Team Asset")
+            effect_label = card_module.TEAM_ASSET_EFFECT_LABELS.get(card.get("effect", ""), card.get("effect", ""))
+            bonus = card.get("bonus", 0)
             effect = card.get("effect", "")
-            stats = f"{card['team']}  ·  {role}  ·  {card['rarity'].title()}"
-            if effect:
-                stats += f"\n{effect}"
+            bonus_str = f"-{bonus:.0%}" if effect in ("tire_wear", "fuel_efficiency", "pit_time") else f"+{bonus:.0%}"
+            stats = f"{card['team']}  ·  {role}  ·  {card['rarity'].title()}\n{effect_label}: **{bonus_str}**  ·  {card.get('description', '')}"
 
         if is_equipped:
             stats += "  ·  ✅ Equipped"
@@ -3081,16 +3108,17 @@ class CollectionView(discord.ui.View):
             stats += f"\n✨ {perk_data.get('name', perk_key)} — {perk_data.get('description', '')}"
 
         detail = discord.Embed(title=title, description=stats, color=color)
+        detail.set_footer(text=format_card_footer(card))
 
         art_file = make_card_art_file(card)
         if art_file:
             detail.set_image(url=f"attachment://{art_file.filename}")
 
-        detail.set_footer(text=format_card_footer(card))
+        back_view = CardDetailView(self)
         if art_file:
-            await interaction.response.send_message(embed=detail, file=art_file)
+            await interaction.response.edit_message(embed=detail, view=back_view, attachments=[art_file])
         else:
-            await interaction.response.send_message(embed=detail)
+            await interaction.response.edit_message(embed=detail, view=back_view, attachments=[])
 
     async def _on_quit(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
