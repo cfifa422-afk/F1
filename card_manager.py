@@ -16,7 +16,8 @@ import json
 import os
 from typing import Dict, List, Optional
 
-CUSTOM_CARDS_FILE = "custom_cards.json"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+CUSTOM_CARDS_FILE = os.path.join(_HERE, "custom_cards.json")
 
 
 def _load() -> Dict:

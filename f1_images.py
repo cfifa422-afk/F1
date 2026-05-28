@@ -1,7 +1,11 @@
 import os
 from typing import Optional
 
-CARD_IMAGES_DIR = "card_images"
+# Anchor to the directory that contains this file so paths work correctly
+# regardless of where the hosting service sets the working directory.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+CARD_IMAGES_DIR = os.path.join(_HERE, "card_images")
 CARS_DIR = os.path.join(CARD_IMAGES_DIR, "cars")
 SPAWN_DIR = os.path.join(CARD_IMAGES_DIR, "spawn")
 
