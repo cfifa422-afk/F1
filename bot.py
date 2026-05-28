@@ -298,6 +298,7 @@ def give_starter_cards(player_id: str, username: str):
     cards = db.get_player_cards(player_id)
     if not cards["drivers"] and not cards["cars"]:
         import random as _r
+        _now_iso = datetime.now().isoformat()
         starter_driver = {
             "id": f"starter_driver_{player_id}",
             "type": "driver",
@@ -307,6 +308,7 @@ def give_starter_cards(player_id: str, username: str):
             "team": "Williams",
             "rarity": "common",
             "perks": [],
+            "obtained_at": _now_iso,
         }
         starter_car = {
             "id": f"starter_car_{player_id}",
@@ -317,6 +319,7 @@ def give_starter_cards(player_id: str, username: str):
             "handling": 7.3,
             "rarity": "common",
             "perks": [],
+            "obtained_at": _now_iso,
         }
         db.add_card_to_player(player_id, starter_driver, "driver")
         db.add_card_to_player(player_id, starter_car, "car")
@@ -984,12 +987,16 @@ async def spawn_wild_card():
         try:
             card = card_module.generate_spawn_card()
             embed = build_spawn_embed(card)
-            art_file = make_card_art_file(card)
-            if art_file:
-                embed.set_image(url=f"attachment://{art_file.filename}")
+            spawn_path = f1_images.get_local_spawn_path(card)
+            spawn_file = None
+            if spawn_path and os.path.exists(spawn_path):
+                slug = card.get("code", card.get("name", "card")).replace(" ", "_").upper()
+                ext = os.path.splitext(spawn_path)[1] or ".jpg"
+                spawn_file = discord.File(spawn_path, filename=f"spawn_{slug}{ext}")
+                embed.set_image(url=f"attachment://{spawn_file.filename}")
             view = SpawnView(card)
-            if art_file:
-                msg = await channel.send(embed=embed, view=view, file=art_file)
+            if spawn_file:
+                msg = await channel.send(embed=embed, view=view, file=spawn_file)
             else:
                 msg = await channel.send(embed=embed, view=view)
             view.message = msg
@@ -1091,14 +1098,27 @@ async def config_channels_list(interaction: discord.Interaction):
 
 # ==================== CARD MANAGEMENT (ADMIN) ====================
 
+async def _save_attachment(attachment: discord.Attachment, path: str):
+    """Download a Discord attachment and save it to path."""
+    import aiohttp
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(attachment.url) as resp:
+            if resp.status == 200:
+                with open(path, "wb") as f:
+                    f.write(await resp.read())
+
+
 @config_group.command(name="adddriver", description="Add a custom driver card to the spawn/pack pool")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(
     name="Full driver name (e.g. Kimi Antonelli)",
     code="3-letter code used for image lookup (e.g. ANT)",
     skill="Skill rating 1.0 – 10.0",
     team="Team name (e.g. Mercedes)",
     rarity="Card rarity tier",
-    image="Card art PNG (transparent background recommended)",
+    card_image="Card art shown in collection & packs (full designed card PNG)",
+    spawn_image="Photo shown when the card spawns in chat (clean driver photo)",
 )
 async def config_adddriver(
     interaction: discord.Interaction,
@@ -1107,22 +1127,22 @@ async def config_adddriver(
     skill: float,
     team: str,
     rarity: Literal["common", "rare", "epic", "legendary"],
-    image: Optional[discord.Attachment] = None,
+    card_image: Optional[discord.Attachment] = None,
+    spawn_image: Optional[discord.Attachment] = None,
 ):
     if not _is_admin(interaction):
         await interaction.response.send_message("❌ Admin only.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
-    # Save image if provided
-    if image:
-        ext = os.path.splitext(image.filename)[1] or ".png"
-        img_path = f"card_images/{code.upper()}{ext}"
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image.url) as resp:
-                if resp.status == 200:
-                    with open(img_path, "wb") as f:
-                        f.write(await resp.read())
+    saved = []
+    if card_image:
+        ext = os.path.splitext(card_image.filename)[1] or ".png"
+        await _save_attachment(card_image, f"card_images/{code.upper()}{ext}")
+        saved.append(f"Card art → `card_images/{code.upper()}{ext}`")
+    if spawn_image:
+        ext2 = os.path.splitext(spawn_image.filename)[1] or ".png"
+        await _save_attachment(spawn_image, f"card_images/spawn/{code.upper()}{ext2}")
+        saved.append(f"Spawn photo → `card_images/spawn/{code.upper()}{ext2}`")
     entry = cm.add_driver(name, code, skill, team, rarity)
     color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
     emoji = card_module.RARITY_EMOJIS.get(rarity, "")
@@ -1132,21 +1152,20 @@ async def config_adddriver(
                     f"Team: {team}  ·  Skill: {skill}/10",
         color=color,
     )
-    if image:
-        embed.set_footer(text=f"Image saved as card_images/{code.upper()}{ext}")
-    else:
-        embed.set_footer(text="No image provided — card will appear without art until one is uploaded.")
+    embed.set_footer(text="\n".join(saved) if saved else "No images provided — upload later via this command.")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @config_group.command(name="addcar", description="Add a custom car card to the spawn/pack pool")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(
     name="Full car name (e.g. Williams FW47)",
     team="Team name (e.g. Williams)",
     top_speed="Top speed in km/h (e.g. 355)",
     handling="Handling rating 1.0 – 10.0",
     rarity="Card rarity tier",
-    image="Card art PNG (transparent background recommended)",
+    card_image="Card art shown in collection & packs (full designed card PNG)",
+    spawn_image="Photo shown when the card spawns in chat",
 )
 async def config_addcar(
     interaction: discord.Interaction,
@@ -1155,22 +1174,23 @@ async def config_addcar(
     top_speed: int,
     handling: float,
     rarity: Literal["common", "rare", "epic", "legendary"],
-    image: Optional[discord.Attachment] = None,
+    card_image: Optional[discord.Attachment] = None,
+    spawn_image: Optional[discord.Attachment] = None,
 ):
     if not _is_admin(interaction):
         await interaction.response.send_message("❌ Admin only.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
-    if image:
-        slug = name.replace(" ", "_").replace("+", "plus")
-        ext = os.path.splitext(image.filename)[1] or ".png"
-        img_path = f"card_images/cars/{slug}{ext}"
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image.url) as resp:
-                if resp.status == 200:
-                    with open(img_path, "wb") as f:
-                        f.write(await resp.read())
+    slug = name.replace(" ", "_").replace("+", "plus")
+    saved = []
+    if card_image:
+        ext = os.path.splitext(card_image.filename)[1] or ".png"
+        await _save_attachment(card_image, f"card_images/cars/{slug}{ext}")
+        saved.append(f"Card art → `card_images/cars/{slug}{ext}`")
+    if spawn_image:
+        ext2 = os.path.splitext(spawn_image.filename)[1] or ".png"
+        await _save_attachment(spawn_image, f"card_images/spawn/car_{slug}{ext2}")
+        saved.append(f"Spawn photo → `card_images/spawn/car_{slug}{ext2}`")
     entry = cm.add_car(name, team, top_speed, handling, rarity)
     color = card_module.RARITY_COLORS.get(rarity, 0x95A5A6)
     emoji = card_module.RARITY_EMOJIS.get(rarity, "")
@@ -1180,14 +1200,12 @@ async def config_addcar(
                     f"Team: {team}  ·  Top Speed: {top_speed} km/h  ·  Handling: {handling}/10",
         color=color,
     )
-    if image:
-        embed.set_footer(text=f"Image saved to card_images/cars/")
-    else:
-        embed.set_footer(text="No image provided — card will appear without art until one is uploaded.")
+    embed.set_footer(text="\n".join(saved) if saved else "No images provided — upload later via this command.")
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 @config_group.command(name="listcards", description="List all custom cards in the pool")
+@app_commands.default_permissions(administrator=True)
 async def config_listcards(interaction: discord.Interaction):
     if not _is_admin(interaction):
         await interaction.response.send_message("❌ Admin only.", ephemeral=True)
@@ -1214,6 +1232,7 @@ async def config_listcards(interaction: discord.Interaction):
 
 
 @config_group.command(name="removedriver", description="Remove a custom driver card by code")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(code="3-letter driver code (e.g. ANT)")
 async def config_removedriver(interaction: discord.Interaction, code: str):
     if not _is_admin(interaction):
@@ -1227,6 +1246,7 @@ async def config_removedriver(interaction: discord.Interaction, code: str):
 
 
 @config_group.command(name="removecar", description="Remove a custom car card by name")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(name="Exact car name (e.g. Williams FW47)")
 async def config_removecar(interaction: discord.Interaction, name: str):
     if not _is_admin(interaction):
@@ -3241,9 +3261,8 @@ class CollectionView(discord.ui.View):
         caught_line = ""
         if caught_raw:
             try:
-                import calendar
                 caught_dt = datetime.fromisoformat(str(caught_raw))
-                ts = int(calendar.timegm(caught_dt.timetuple()))
+                ts = int(caught_dt.timestamp())
                 caught_line = f"Caught on <t:{ts}> (<t:{ts}:R>)"
             except Exception:
                 caught_line = ""
@@ -3251,10 +3270,10 @@ class CollectionView(discord.ui.View):
         player_data = db.get_player(self.player_id)
         total_races = player_data.get("stats", {}).get("total_races", 0) if player_data else 0
 
-        lines = [f"``ID: #{card_display_id}``"]
+        lines = [f"ID: ``#{card_display_id}``"]
         if caught_line:
             lines.append(caught_line)
-        lines.append(f"``Matches played``: {total_races}")
+        lines.append(f"__Matches played__: {total_races}")
         content = "\n".join(lines)
 
         art_file = make_card_art_file(card)

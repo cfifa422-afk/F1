@@ -1,0 +1,12 @@
+{
+  "drivers": [],
+  "cars": [
+    {
+      "name": "Matrix",
+      "team": "ferrari",
+      "top_speed": 450,
+      "handling": 10.0,
+      "rarity": "legendary"
+    }
+  ]
+}

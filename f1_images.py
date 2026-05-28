@@ -3,12 +3,13 @@ from typing import Optional
 
 CARD_IMAGES_DIR = "card_images"
 CARS_DIR = os.path.join(CARD_IMAGES_DIR, "cars")
+SPAWN_DIR = os.path.join(CARD_IMAGES_DIR, "spawn")
 
 _IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".webp"]
 
 
 def get_local_driver_path(code: str) -> Optional[str]:
-    """Find a driver image by code — scans card_images/ automatically."""
+    """Find a driver card-art image by code — scans card_images/ automatically."""
     if not code:
         return None
     code = code.strip().upper()
@@ -19,8 +20,20 @@ def get_local_driver_path(code: str) -> Optional[str]:
     return None
 
 
+def get_local_spawn_driver_path(code: str) -> Optional[str]:
+    """Find a driver spawn photo — checks card_images/spawn/ first, falls back to card art."""
+    if not code:
+        return None
+    code = code.strip().upper()
+    for ext in _IMAGE_EXTS:
+        path = os.path.join(SPAWN_DIR, f"{code}{ext}")
+        if os.path.exists(path):
+            return path
+    return get_local_driver_path(code)
+
+
 def get_local_car_path(name: str) -> Optional[str]:
-    """Find a car image by name — checks cars/ subdirectory first, then root."""
+    """Find a car card-art image by name — checks cars/ subdirectory first, then root."""
     if not name:
         return None
     slug = (
@@ -47,8 +60,20 @@ def get_local_car_path(name: str) -> Optional[str]:
     return None
 
 
+def get_local_spawn_car_path(name: str) -> Optional[str]:
+    """Find a car spawn photo — checks card_images/spawn/car_* first, falls back to card art."""
+    if not name:
+        return None
+    slug = name.replace(" ", "_").replace("-", "_").replace("+", "plus")
+    for ext in _IMAGE_EXTS:
+        path = os.path.join(SPAWN_DIR, f"car_{slug}{ext}")
+        if os.path.exists(path):
+            return path
+    return get_local_car_path(name)
+
+
 def get_local_card_path(card: dict) -> Optional[str]:
-    """Return the local file path for any card type, or None if unavailable."""
+    """Return the local card-art file path for any card type."""
     ctype = card.get("type")
     if ctype == "driver":
         return get_local_driver_path(card.get("code", ""))
@@ -57,7 +82,17 @@ def get_local_card_path(card: dict) -> Optional[str]:
     return None
 
 
-# Legacy aliases kept for compatibility
+def get_local_spawn_path(card: dict) -> Optional[str]:
+    """Return the local spawn-photo path (spawn/ folder first, falls back to card art)."""
+    ctype = card.get("type")
+    if ctype == "driver":
+        return get_local_spawn_driver_path(card.get("code", ""))
+    elif ctype == "car":
+        return get_local_spawn_car_path(card.get("name", ""))
+    return None
+
+
+# Legacy aliases
 def get_card_art_path(card: dict) -> Optional[str]:
     return get_local_card_path(card)
 

@@ -218,6 +218,20 @@
             "perks": [],
             "obtained_at": "2026-05-28T08:32:30.111761",
             "caught_at": "2026-05-28T08:32:30.111761"
+          },
+          {
+            "id": "A4D094B",
+            "type": "driver",
+            "name": "Lance Stroll",
+            "code": "STR",
+            "skill": 6.5,
+            "team": "Aston Martin",
+            "rarity": "common",
+            "perks": [
+              "fuel_saver"
+            ],
+            "obtained_at": "2026-05-28T11:22:15.669034",
+            "caught_at": "2026-05-28T11:22:15.669034"
           }
         ],
         "cars": [
