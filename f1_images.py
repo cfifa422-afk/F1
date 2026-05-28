@@ -1,104 +1,199 @@
-import os
-from typing import Optional
+"""
+f1_images.py
+============
+Loads every card image into memory at startup so there are no file-path
+issues at runtime, regardless of how or where the host launches the bot.
 
-# Anchor to the directory that contains this file so paths work correctly
-# regardless of where the hosting service sets the working directory.
+Images are stored as raw bytes keyed by their stem (upper-case for drivers,
+slugified name for cars).  discord.File objects are built on-demand from
+io.BytesIO so no file-system access is needed after startup.
+"""
+
+import os
+import io
+import logging
+from typing import Optional, Dict, Tuple
+
+import discord
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Internal store:  key -> (original_filename, raw_bytes)
+# ---------------------------------------------------------------------------
+# Driver card art:   key = "ALB", "VER", …
+# Driver spawn art:  key = "spawn:ALB", "spawn:VER", …
+# Car card art:      key = "car:Williams_FW45", …  (slugified name)
+# Car spawn art:     key = "spawn_car:Williams_FW45", …
+# ---------------------------------------------------------------------------
+
+_store: Dict[str, Tuple[str, bytes]] = {}
+
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-CARD_IMAGES_DIR = os.path.join(_HERE, "card_images")
-CARS_DIR = os.path.join(CARD_IMAGES_DIR, "cars")
-SPAWN_DIR = os.path.join(CARD_IMAGES_DIR, "spawn")
 
-_IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".webp"]
+def _slugify(name: str) -> str:
+    return name.replace(" ", "_").replace("-", "_").replace("+", "plus")
 
 
-def get_local_driver_path(code: str) -> Optional[str]:
-    """Find a driver card-art image by code — scans card_images/ automatically."""
-    if not code:
-        return None
-    code = code.strip().upper()
-    for ext in _IMAGE_EXTS:
-        path = os.path.join(CARD_IMAGES_DIR, f"{code}{ext}")
-        if os.path.exists(path):
-            return path
-    return None
-
-
-def get_local_spawn_driver_path(code: str) -> Optional[str]:
-    """Find a driver spawn photo — checks card_images/spawn/ first, falls back to card art."""
-    if not code:
-        return None
-    code = code.strip().upper()
-    for ext in _IMAGE_EXTS:
-        path = os.path.join(SPAWN_DIR, f"{code}{ext}")
-        if os.path.exists(path):
-            return path
-    return get_local_driver_path(code)
-
-
-def get_local_car_path(name: str) -> Optional[str]:
-    """Find a car card-art image by name — checks cars/ subdirectory first, then root."""
-    if not name:
-        return None
-    slug = (
-        name.replace(" ", "_")
-            .replace("-", "_")
-            .replace("+", "plus")
-    )
-    for search_dir in [CARS_DIR, CARD_IMAGES_DIR]:
-        for ext in _IMAGE_EXTS:
-            path = os.path.join(search_dir, f"{slug}{ext}")
-            if os.path.exists(path):
-                return path
-
-    name_lower = name.lower()
-    for search_dir in [CARS_DIR, CARD_IMAGES_DIR]:
-        if not os.path.isdir(search_dir):
+def _load_dir(directory: str, key_prefix: str, stem_transform=str.upper) -> int:
+    """Load all images in *directory* into _store.  Returns count loaded."""
+    if not os.path.isdir(directory):
+        return 0
+    count = 0
+    for fname in os.listdir(directory):
+        stem, ext = os.path.splitext(fname)
+        if ext.lower() not in _IMAGE_EXTS:
             continue
-        for fname in os.listdir(search_dir):
-            stem = os.path.splitext(fname)[0].lower().replace("_", " ").replace("plus", "+")
-            if stem in name_lower or name_lower in stem:
-                path = os.path.join(search_dir, fname)
-                if os.path.exists(path):
-                    return path
-    return None
+        path = os.path.join(directory, fname)
+        try:
+            with open(path, "rb") as f:
+                raw = f.read()
+            key = key_prefix + stem_transform(stem)
+            _store[key] = (fname, raw)
+            count += 1
+        except Exception as e:
+            log.warning("Could not load image %s: %s", path, e)
+    return count
 
 
-def get_local_spawn_car_path(name: str) -> Optional[str]:
-    """Find a car spawn photo — checks card_images/spawn/car_* first, falls back to card art."""
+def _load_all():
+    """Called once at import time to fill _store."""
+    base = os.path.join(_HERE, "card_images")
+
+    # Driver card art  (key = "ALB", "VER", …)
+    n = _load_dir(base, "", str.upper)
+
+    # Car card art  (key = "car:Williams_FW45", …)
+    n += _load_dir(os.path.join(base, "cars"), "car:", _slugify)
+
+    # Spawn driver art  (key = "spawn:ALB", …)
+    n += _load_dir(os.path.join(base, "spawn"), "spawn:", str.upper)
+
+    # Spawn car art  (key = "spawn_car:car_Williams_FW45", …)
+    # Saved by addcar as  card_images/spawn/car_{slug}.ext
+    # We re-map those to  "spawn_car:{slug}"
+    spawn_dir = os.path.join(base, "spawn")
+    if os.path.isdir(spawn_dir):
+        for fname in os.listdir(spawn_dir):
+            stem, ext = os.path.splitext(fname)
+            if ext.lower() not in _IMAGE_EXTS:
+                continue
+            if not stem.startswith("car_"):
+                continue
+            slug = stem[4:]   # strip leading "car_"
+            path = os.path.join(spawn_dir, fname)
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+                key = "spawn_car:" + slug
+                _store[key] = (fname, raw)
+            except Exception as e:
+                log.warning("Could not load spawn car image %s: %s", path, e)
+
+    log.info("f1_images: loaded %d card images into memory", len(_store))
+    if n == 0:
+        log.warning(
+            "f1_images: NO images loaded — card_images/ not found at %s", base
+        )
+
+
+_load_all()
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def _make_file(key: str, filename_override: Optional[str] = None) -> Optional[discord.File]:
+    entry = _store.get(key)
+    if not entry:
+        return None
+    fname, raw = entry
+    return discord.File(io.BytesIO(raw), filename=filename_override or fname)
+
+
+def get_driver_card_file(code: str) -> Optional[discord.File]:
+    """Card-art file for a driver (shown in collection / packs)."""
+    if not code:
+        return None
+    return _make_file(code.strip().upper())
+
+
+def get_driver_spawn_file(code: str) -> Optional[discord.File]:
+    """Spawn-photo file for a driver; falls back to card art."""
+    if not code:
+        return None
+    code = code.strip().upper()
+    f = _make_file("spawn:" + code, filename_override=f"spawn_{code}.png")
+    return f or _make_file(code)
+
+
+def get_car_card_file(name: str) -> Optional[discord.File]:
+    """Card-art file for a car."""
     if not name:
         return None
-    slug = name.replace(" ", "_").replace("-", "_").replace("+", "plus")
-    for ext in _IMAGE_EXTS:
-        path = os.path.join(SPAWN_DIR, f"car_{slug}{ext}")
-        if os.path.exists(path):
-            return path
-    return get_local_car_path(name)
-
-
-def get_local_card_path(card: dict) -> Optional[str]:
-    """Return the local card-art file path for any card type."""
-    ctype = card.get("type")
-    if ctype == "driver":
-        return get_local_driver_path(card.get("code", ""))
-    elif ctype == "car":
-        return get_local_car_path(card.get("name", ""))
+    slug = _slugify(name)
+    # Try exact slug first, then fuzzy match
+    key = "car:" + slug
+    if key in _store:
+        return _make_file(key)
+    name_lower = name.lower()
+    for k, (fname, _) in _store.items():
+        if not k.startswith("car:"):
+            continue
+        k_name = k[4:].replace("_", " ").lower()
+        if k_name in name_lower or name_lower in k_name:
+            return _make_file(k)
     return None
 
 
-def get_local_spawn_path(card: dict) -> Optional[str]:
-    """Return the local spawn-photo path (spawn/ folder first, falls back to card art)."""
+def get_car_spawn_file(name: str) -> Optional[discord.File]:
+    """Spawn-photo file for a car; falls back to card art."""
+    if not name:
+        return None
+    slug = _slugify(name)
+    key = "spawn_car:" + slug
+    f = _make_file(key, filename_override=f"spawn_car_{slug}.png")
+    return f or get_car_card_file(name)
+
+
+def get_card_file(card: dict) -> Optional[discord.File]:
+    """Card-art file for any card type."""
     ctype = card.get("type")
     if ctype == "driver":
-        return get_local_spawn_driver_path(card.get("code", ""))
+        return get_driver_card_file(card.get("code", ""))
     elif ctype == "car":
-        return get_local_spawn_car_path(card.get("name", ""))
+        return get_car_card_file(card.get("name", ""))
     return None
 
 
-# Legacy aliases
-def get_card_art_path(card: dict) -> Optional[str]:
-    return get_local_card_path(card)
+def get_spawn_file(card: dict) -> Optional[discord.File]:
+    """Spawn-photo file for any card type (spawn folder first, card art fallback)."""
+    ctype = card.get("type")
+    if ctype == "driver":
+        return get_driver_spawn_file(card.get("code", ""))
+    elif ctype == "car":
+        return get_car_spawn_file(card.get("name", ""))
+    return None
 
-def get_card_image(card: dict) -> Optional[str]:
-    return None  # All images served as local file attachments
+
+def reload():
+    """Re-scan card_images/ at runtime (e.g. after uploading new images via /config)."""
+    _store.clear()
+    _load_all()
+
+
+# Legacy aliases kept so existing bot.py calls still work
+def get_local_card_path(card: dict):
+    return None  # no longer used — use get_card_file() instead
+
+def get_local_spawn_path(card: dict):
+    return None
+
+def get_card_art_path(card: dict):
+    return None
+
+def get_card_image(card: dict):
+    return None
