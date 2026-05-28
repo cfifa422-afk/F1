@@ -6,7 +6,7 @@ from typing import List, Dict, Optional
 
 DRIVERS = {
     "legendary": [
-        {"name": "Lewis Hamilton", "code": "HAM", "skill": 8.8, "team": "Mercedes"},
+        {"name": "Lewis Hamilton", "code": "HAM", "skill": 8.8, "team": "Ferrari"},
         {"name": "Max Verstappen", "code": "VER", "skill": 9.2, "team": "Red Bull"},
         {"name": "Lando Norris", "code": "NOR", "skill": 8.7, "team": "McLaren"},
         {"name": "Ayrton Senna", "code": "SEN", "skill": 9.5, "team": "McLaren"},
