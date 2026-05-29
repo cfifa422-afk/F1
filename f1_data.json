@@ -963,6 +963,20 @@
             "perks": [],
             "obtained_at": "2026-05-28T14:07:42.458886",
             "caught_at": "2026-05-28T14:07:42.458886"
+          },
+          {
+            "id": "FD694DE",
+            "type": "driver",
+            "name": "Liam Lawson",
+            "code": "LAW",
+            "skill": 7.6,
+            "team": "Red Bull",
+            "rarity": "rare",
+            "perks": [
+              "consistency"
+            ],
+            "obtained_at": "2026-05-29T04:23:43.113524",
+            "caught_at": "2026-05-29T04:23:43.113524"
           }
         ],
         "cars": [
