@@ -3267,6 +3267,7 @@ class CollectionView(discord.ui.View):
             await interaction.response.send_message("Card not found.", ephemeral=True)
             return
 
+        # Build plain-text header (no embed)
         card_display_id = card.get("id", "?").upper()
         caught_raw = card.get("caught_at") or card.get("obtained_at")
         caught_line = ""
@@ -3281,48 +3282,21 @@ class CollectionView(discord.ui.View):
         player_data = db.get_player(self.player_id)
         total_races = player_data.get("stats", {}).get("total_races", 0) if player_data else 0
 
-        rarity = card.get("rarity", "common")
-        emoji = card_module.RARITY_EMOJIS.get(rarity, "")
-        color = card_module.RARITY_COLORS.get(rarity, 0x5865F2)
-
-        if card.get("type") == "driver":
-            title = f"👤 {card['name']} ({card.get('code', '')})"
-            stats = f"**Team:** {card.get('team', '?')}  ·  **Skill:** {card.get('skill', '?')}/10"
-        elif card.get("type") == "car":
-            title = f"🏎️ {card['name']}"
-            stats = f"**Team:** {card.get('team', '?')}  ·  **Top Speed:** {card.get('top_speed', '?')} km/h"
-        else:
-            title = f"🏗️ {card['name']}"
-            stats = f"**Team:** {card.get('team', '?')}  ·  **Role:** {card.get('role', '?')}"
-
-        desc_lines = [f"{emoji} **{rarity.upper()}**  ·  {stats}", f"ID: `#{card_display_id}`"]
+        lines = [f"ID: ``#{card_display_id}``"]
         if caught_line:
-            desc_lines.append(caught_line)
-        desc_lines.append(f"Races played: **{total_races}**")
-
-        detail_embed = discord.Embed(title=title, description="\n".join(desc_lines), color=color)
-
-        if card.get("perks"):
-            perk_key = card["perks"][0]
-            perk_data = card_module.PERKS.get(perk_key, {})
-            detail_embed.add_field(
-                name="✨ Special Perk",
-                value=f"**{perk_data.get('name', perk_key)}** — {perk_data.get('description', '')}",
-                inline=False,
-            )
+            lines.append(caught_line)
+        lines.append(f"__Matches played__: {total_races}")
+        content = "\n".join(lines)
 
         art_file = make_card_art_file(card)
-        if art_file:
-            detail_embed.set_image(url=f"attachment://{art_file.filename}")
-
         back_view = CardDetailView(self)
         if art_file:
             await interaction.response.edit_message(
-                content=None, embed=detail_embed, view=back_view, attachments=[art_file]
+                content=content, embed=None, view=back_view, attachments=[art_file]
             )
         else:
             await interaction.response.edit_message(
-                content=None, embed=detail_embed, view=back_view, attachments=[]
+                content=content, embed=None, view=back_view, attachments=[]
             )
 
     async def _on_quit(self, interaction: discord.Interaction):

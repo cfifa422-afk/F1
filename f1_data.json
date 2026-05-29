@@ -1739,6 +1739,79 @@
         "acceleration": 0,
         "suspension": 0
       }
+    },
+    "818691289054445579": {
+      "id": "818691289054445579",
+      "username": "yeahnicks",
+      "created_at": "2026-05-29T02:45:38.218390",
+      "coins": 0,
+      "equipped": {
+        "driver_id": "starter_driver_818691289054445579",
+        "car_id": "starter_car_818691289054445579",
+        "team_assets": []
+      },
+      "last_daily_pack": null,
+      "last_weekly_pack": null,
+      "stats": {
+        "wins": 0,
+        "losses": 0,
+        "dnf": 0,
+        "total_races": 0,
+        "win_rate": 0.0,
+        "ranking_points": 0,
+        "rank": "Bronze"
+      },
+      "cards": {
+        "drivers": [
+          {
+            "id": "starter_driver_818691289054445579",
+            "type": "driver",
+            "name": "Alex Albon",
+            "code": "ALB",
+            "skill": 6.8,
+            "team": "Williams",
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-29T02:45:38.220816",
+            "caught_at": "2026-05-29T02:45:38.220816"
+          },
+          {
+            "id": "EE967DA",
+            "type": "driver",
+            "name": "Kimi Antonelli",
+            "code": "ANT",
+            "skill": 7.4,
+            "team": "Mercedes",
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-29T02:45:38.302173",
+            "caught_at": "2026-05-29T02:45:38.302173"
+          }
+        ],
+        "cars": [
+          {
+            "id": "starter_car_818691289054445579",
+            "type": "car",
+            "name": "Williams FW45",
+            "team": "Williams",
+            "top_speed": 360,
+            "handling": 7.3,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-29T02:45:38.281746",
+            "caught_at": "2026-05-29T02:45:38.281746"
+          }
+        ],
+        "team_assets": []
+      },
+      "achievements": [],
+      "upgrades": {
+        "engine": 0,
+        "aero": 0,
+        "brakes": 0,
+        "acceleration": 0,
+        "suspension": 0
+      }
     }
   },
   "matches": [],
