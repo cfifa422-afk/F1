@@ -977,6 +977,20 @@
             ],
             "obtained_at": "2026-05-29T04:23:43.113524",
             "caught_at": "2026-05-29T04:23:43.113524"
+          },
+          {
+            "id": "2614F4A",
+            "type": "driver",
+            "name": "Alex Albon",
+            "code": "ALB",
+            "skill": 6.8,
+            "team": "Williams",
+            "rarity": "common",
+            "perks": [
+              "rain_master"
+            ],
+            "obtained_at": "2026-05-29T18:54:12.856135",
+            "caught_at": "2026-05-29T18:54:12.856135"
           }
         ],
         "cars": [

@@ -425,33 +425,35 @@ def build_pack_embed(card: Dict, pack_type: str, user: discord.User, player_id: 
     return embed
 
 
-def build_spawn_content(card: Dict) -> str:
-    """Plain-text spawn message — no embed."""
+def build_spawn_embed(card: Dict, image_filename: Optional[str] = None) -> discord.Embed:
+    """Rich embed for wild card spawns."""
     rarity = card["rarity"]
     rarity_emoji = card_module.RARITY_EMOJIS.get(rarity, "")
-    rarity_label = rarity.upper()
+    color = card_module.RARITY_COLORS.get(rarity, 0x3498DB)
 
     if card["type"] == "driver":
-        card_name = f"{card['name']} ({card.get('code', '')})"
-        card_icon = "👤"
+        card_name = f"👤  {card['name']} ({card.get('code', '')})"
         team_line = card.get("team", "")
     elif card["type"] == "team_asset":
-        card_name = card["name"]
-        card_icon = "🏗️"
+        card_name = f"🏗️  {card['name']}"
         team_line = card.get("team", "")
     else:
-        card_name = card["name"]
-        card_icon = "🏎️"
+        card_name = f"🏎️  {card['name']}"
         team_line = card.get("team", "")
 
-    lines = [
-        "🏁  **A wild F1 card appeared!**",
-        f"## {card_icon}  {card_name}",
-        f"{rarity_emoji}  **{rarity_label}**" + (f"  ·  {team_line}" if team_line else ""),
-        "",
-        "*Type the exact name to catch it!  ·  Expires in 5 minutes*",
-    ]
-    return "\n".join(lines)
+    description = f"{rarity_emoji}  **{rarity.upper()}**"
+    if team_line:
+        description += f"  ·  {team_line}"
+
+    embed = discord.Embed(
+        title="🏁  A wild F1 card appeared!",
+        description=f"## {card_name}\n{description}",
+        color=color,
+    )
+    embed.set_footer(text="Type the exact name to catch it!  ·  Expires in 5 minutes")
+    if image_filename:
+        embed.set_image(url=f"attachment://{image_filename}")
+    return embed
 
 
 # ==================== DYNAMIC PACK OPENING ====================
@@ -921,12 +923,12 @@ class SpawnView(discord.ui.View):
             try:
                 rarity_emoji = card_module.RARITY_EMOJIS.get(self.card["rarity"], "")
                 name = self.card["name"]
-                expired_text = (
-                    f"⏰  **This card has fled!**\n"
-                    f"~~**{name}**~~  {rarity_emoji}  **{self.card['rarity'].upper()}**\n"
-                    f"*Nobody caught it in time. Better luck next time!*"
+                embed = discord.Embed(
+                    title="⏰  This card has fled!",
+                    description=f"~~**{name}**~~  {rarity_emoji}  **{self.card['rarity'].upper()}**\n*Nobody caught it in time. Better luck next time!*",
+                    color=0x95A5A6,
                 )
-                await self.message.edit(content=expired_text, embed=None, view=self, attachments=[])
+                await self.message.edit(content=None, embed=embed, view=self, attachments=[])
             except Exception:
                 pass
 
@@ -958,13 +960,13 @@ async def spawn_wild_card():
             continue
         try:
             card = card_module.generate_spawn_card()
-            spawn_text = build_spawn_content(card)
             spawn_file = f1_images.get_spawn_file(card)
+            spawn_embed = build_spawn_embed(card, image_filename=spawn_file.filename if spawn_file else None)
             view = SpawnView(card)
             if spawn_file:
-                msg = await channel.send(content=spawn_text, embed=None, view=view, file=spawn_file)
+                msg = await channel.send(content=None, embed=spawn_embed, view=view, file=spawn_file)
             else:
-                msg = await channel.send(content=spawn_text, embed=None, view=view)
+                msg = await channel.send(content=None, embed=spawn_embed, view=view)
             view.message = msg
             _guild_last_spawn[gid] = now
             mode = "active" if is_active else "idle"
@@ -1455,7 +1457,7 @@ async def f1_collection(interaction: discord.Interaction):
         return
 
     view = CollectionView(player_id, all_cards, interaction.user.display_name)
-    await interaction.response.send_message(content=view.build_content(), embed=None, view=view)
+    await interaction.response.send_message(embed=view.build_embed(), view=view)
 
 
 # ==================== SHOP ====================
@@ -3049,8 +3051,8 @@ class CardDetailView(discord.ui.View):
             await interaction.response.send_message("This isn't your collection!", ephemeral=True)
             return
         await interaction.response.edit_message(
-            content=self.collection_view.build_content(),
-            embed=None,
+            content=None,
+            embed=self.collection_view.build_embed(),
             view=self.collection_view,
             attachments=[],
         )
@@ -3157,7 +3159,7 @@ class CollectionView(discord.ui.View):
             select.callback = self._on_select
             self.add_item(select)
 
-    def build_content(self) -> str:
+    def build_embed(self) -> discord.Embed:
         page_cards = self._get_page_cards()
         equipped = db.get_equipped(self.player_id)
         filter_label = {
@@ -3167,25 +3169,27 @@ class CollectionView(discord.ui.View):
             "team_asset": "Team Assets",
         }.get(self.filter_type, "All Cards")
 
-        lines = [
-            f"**{self.display_name}'s Collection**",
-            f"{len(self.cards)} cards  ·  Page {self.page + 1} of {self.total_pages}  ·  {filter_label}",
-            "",
-        ]
+        embed = discord.Embed(
+            title=f"🎴  {self.display_name}'s Collection",
+            color=0x5865F2,
+        )
+
+        lines = []
         for card in page_cards:
-            rarity = card_module.RARITY_EMOJIS.get(card["rarity"], "") + " " + card["rarity"].title()
+            rarity_emoji = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+            rarity_label = card["rarity"].title()
             is_equipped = card["id"] in (equipped.get("driver_id"), equipped.get("car_id"))
             eq = "  ✅" if is_equipped else ""
 
             if card["type"] == "driver":
                 name_line = f"**{card['name']} ({card['code']})**{eq}"
-                detail = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {rarity}"
+                detail = f"{card['team']}  ·  Skill {card['skill']}/10  ·  {rarity_emoji} {rarity_label}"
             elif card["type"] == "car":
                 name_line = f"**{card['name']}**{eq}"
-                detail = f"{card['team']}  ·  {card['top_speed']} km/h  ·  {rarity}"
+                detail = f"{card['team']}  ·  {card['top_speed']} km/h  ·  {rarity_emoji} {rarity_label}"
             else:
                 name_line = f"**{card['name']}**{eq}"
-                detail = f"{card['team']}  ·  {card.get('role', 'Team Asset')}  ·  {rarity}"
+                detail = f"{card['team']}  ·  {card.get('role', 'Team Asset')}  ·  {rarity_emoji} {rarity_label}"
 
             if card.get("perks"):
                 perk_name = card["perks"][0].replace("_", " ").title()
@@ -3193,8 +3197,9 @@ class CollectionView(discord.ui.View):
 
             lines.append(f"{name_line}\n{detail}")
 
-        lines.append("\n✅ = Equipped  ·  Use /f1 equip to change loadout")
-        return "\n".join(lines)
+        embed.description = "\n".join(lines) if lines else "*No cards in this category.*"
+        embed.set_footer(text=f"{len(self.cards)} cards  ·  Page {self.page + 1} of {self.total_pages}  ·  {filter_label}  ·  ✅ = Equipped")
+        return embed
 
     async def _check(self, interaction: discord.Interaction) -> bool:
         if str(interaction.user.id) != self.player_id:
@@ -3208,7 +3213,7 @@ class CollectionView(discord.ui.View):
         self.page = 0
         self._update_filtered()
         self._rebuild()
-        await interaction.response.edit_message(content=self.build_content(), embed=None, view=self)
+        await interaction.response.edit_message(content=None, embed=self.build_embed(), view=self)
 
     async def _filter_drivers(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
@@ -3216,7 +3221,7 @@ class CollectionView(discord.ui.View):
         self.page = 0
         self._update_filtered()
         self._rebuild()
-        await interaction.response.edit_message(content=self.build_content(), embed=None, view=self)
+        await interaction.response.edit_message(content=None, embed=self.build_embed(), view=self)
 
     async def _filter_cars(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
@@ -3224,7 +3229,7 @@ class CollectionView(discord.ui.View):
         self.page = 0
         self._update_filtered()
         self._rebuild()
-        await interaction.response.edit_message(content=self.build_content(), embed=None, view=self)
+        await interaction.response.edit_message(content=None, embed=self.build_embed(), view=self)
 
     async def _filter_assets(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
@@ -3232,19 +3237,19 @@ class CollectionView(discord.ui.View):
         self.page = 0
         self._update_filtered()
         self._rebuild()
-        await interaction.response.edit_message(content=self.build_content(), embed=None, view=self)
+        await interaction.response.edit_message(content=None, embed=self.build_embed(), view=self)
 
     async def _go_prev(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
         self.page = max(0, self.page - 1)
         self._rebuild()
-        await interaction.response.edit_message(content=self.build_content(), embed=None, view=self)
+        await interaction.response.edit_message(content=None, embed=self.build_embed(), view=self)
 
     async def _go_next(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
         self.page = min(self.total_pages - 1, self.page + 1)
         self._rebuild()
-        await interaction.response.edit_message(content=self.build_content(), embed=None, view=self)
+        await interaction.response.edit_message(content=None, embed=self.build_embed(), view=self)
 
     async def _on_select(self, interaction: discord.Interaction):
         if not await self._check(interaction): return
