@@ -1240,6 +1240,18 @@
             "perks": [],
             "obtained_at": "2026-05-27T13:56:51.688454",
             "caught_at": "2026-05-27T13:56:51.688454"
+          },
+          {
+            "id": "FE96223",
+            "type": "car",
+            "name": "AlphaTauri AT04",
+            "team": "RB",
+            "top_speed": 358,
+            "handling": 7.1,
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-05-28T16:34:04.827584",
+            "caught_at": "2026-05-28T16:34:04.827584"
           }
         ],
         "team_assets": [
@@ -1456,6 +1468,18 @@
             ],
             "obtained_at": "2026-05-28T14:05:57.705713",
             "caught_at": "2026-05-28T14:05:57.705713"
+          },
+          {
+            "id": "2632446",
+            "type": "driver",
+            "name": "Logan Sargeant",
+            "code": "SAR",
+            "skill": 6.1,
+            "team": "Williams",
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-28T16:36:55.312306",
+            "caught_at": "2026-05-28T16:36:55.312306"
           }
         ],
         "cars": [

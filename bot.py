@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
 import os
+import time
 from datetime import datetime
 from typing import Optional, Dict, List, Literal
 import random
@@ -2196,7 +2197,7 @@ class ReactionChallengeView(discord.ui.View):
         self.p2_user   = p2_user
         self.clicks: Dict[str, tuple] = {}
         self.done      = asyncio.Event()
-        self._start    = None
+        self._start    = time.time()   # set when challenge appears, not on first click
 
     async def _handle(self, interaction: discord.Interaction, clicked: str):
         if interaction.user.id not in (self.p1_user.id, self.p2_user.id):
@@ -2206,9 +2207,7 @@ class ReactionChallengeView(discord.ui.View):
         if uid in self.clicks:
             await interaction.response.defer()
             return
-        if self._start is None:
-            self._start = interaction.created_at.timestamp()
-        elapsed = interaction.created_at.timestamp() - self._start
+        elapsed = time.time() - self._start
         correct = clicked == self.direction
         self.clicks[uid] = (correct, elapsed)
         if correct:
@@ -2217,7 +2216,7 @@ class ReactionChallengeView(discord.ui.View):
             )
         else:
             await interaction.response.send_message(
-                f"❌ **{interaction.user.display_name}** — wrong direction!", ephemeral=True
+                f"❌ **{interaction.user.display_name}** — wrong direction! Penalty incoming!", ephemeral=True
             )
         if len(self.clicks) >= 2:
             self.done.set()
@@ -2412,6 +2411,23 @@ async def run_auto_race(
             if scenario:
                 # ── SCENARIO PAUSE ──────────────────────────────────
                 sv = ScenarioView(p1_user, p2_user, scenario, race, message, gif_url)
+
+                # Notify both players so they don't miss the decision
+                scenario_title = scenario.get("title", "Race Decision")
+                is_pit = any(
+                    opt.get("value") == "pit_stop"
+                    for opt in scenario.get("options", [])
+                )
+                pit_note = "  🔧 Pit stop available!" if is_pit else ""
+                try:
+                    await channel.send(
+                        f"⚠️ {p1_user.mention} {p2_user.mention} — "
+                        f"**{scenario_title}** — make your choice now!{pit_note}",
+                        delete_after=SCENARIO_WAIT,
+                    )
+                except Exception:
+                    pass
+
                 try:
                     await message.edit(
                         embed=build_scenario_embed(scenario, race, p1_user, p2_user, gif_url),
@@ -2504,7 +2520,8 @@ async def run_auto_race(
                     title="⚡  REACTION CHALLENGE!",
                     description=(
                         f"## Hit  **{dir_label}**  as fast as you can!\n\n"
-                        f"4 directions — pick the right one first to gain a race advantage!"
+                        f"4 directions — first correct click wins the advantage!\n"
+                        f"❌ Wrong direction = penalty  |  ⏱️ No reaction = penalty"
                     ),
                     color=0xF1C40F,
                 )
@@ -2512,6 +2529,11 @@ async def run_auto_race(
 
                 react_msg = None
                 try:
+                    # Ping both players so they see the challenge
+                    await channel.send(
+                        f"⚡ {p1_user.mention} {p2_user.mention} — **REACTION CHALLENGE!** Hit  **{dir_label}**  NOW!",
+                        delete_after=5,
+                    )
                     react_msg = await channel.send(embed=react_embed, view=rv)
                 except Exception:
                     pass
@@ -2521,7 +2543,7 @@ async def run_auto_race(
                 except asyncio.TimeoutError:
                     rv.stop()
 
-                # Apply gap advantages
+                # Apply gap advantages / penalties
                 p1_uid = str(p1_user.id)
                 p2_uid = str(p2_user.id)
                 p1_click = rv.clicks.get(p1_uid)
@@ -2532,9 +2554,11 @@ async def run_auto_race(
                     correct_clicks.append((p1_user, p1_click[1], "p1"))
                 if p2_click and p2_click[0]:
                     correct_clicks.append((p2_user, p2_click[1], "p2"))
-                correct_clicks.sort(key=lambda x: x[1])
+                correct_clicks.sort(key=lambda x: x[1])   # fastest first
 
                 result_lines = []
+
+                # Reward correct clickers — faster = bigger gain
                 for i, (user, elapsed, side) in enumerate(correct_clicks):
                     gain = 1.5 if i == 0 else 0.5
                     if side == "p1":
@@ -2546,15 +2570,24 @@ async def run_auto_race(
                         f"{medal} **{user.display_name}** reacted in `{elapsed:.2f}s` — **+{gain:.1f}s advantage!**"
                     )
 
+                # Wrong-direction penalty
                 if p1_click and not p1_click[0]:
                     race.gap += 0.4
-                    result_lines.append(f"❌ **{p1_user.display_name}** clicked the wrong way — penalty!")
+                    result_lines.append(f"❌ **{p1_user.display_name}** clicked the wrong direction — **+0.4s penalty!**")
                 if p2_click and not p2_click[0]:
                     race.gap -= 0.4
-                    result_lines.append(f"❌ **{p2_user.display_name}** clicked the wrong way — penalty!")
+                    result_lines.append(f"❌ **{p2_user.display_name}** clicked the wrong direction — **+0.4s penalty!**")
+
+                # No-reaction penalty (didn't click at all within 4s)
+                if not p1_click:
+                    race.gap += 0.3
+                    result_lines.append(f"⏱️ **{p1_user.display_name}** didn't react in time — **+0.3s penalty!**")
+                if not p2_click:
+                    race.gap -= 0.3
+                    result_lines.append(f"⏱️ **{p2_user.display_name}** didn't react in time — **+0.3s penalty!**")
 
                 if not result_lines:
-                    result_lines.append("⏱️  Nobody reacted in time — no advantage gained.")
+                    result_lines.append("⏱️  Nobody reacted — both take a 0.3s penalty.")
 
                 if react_msg:
                     result_embed = discord.Embed(
