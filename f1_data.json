@@ -114,6 +114,18 @@
             ],
             "obtained_at": "2026-05-28T15:46:09.030967",
             "caught_at": "2026-05-28T15:46:09.030967"
+          },
+          {
+            "id": "D3374DF",
+            "type": "driver",
+            "name": "Charles Leclerc",
+            "code": "LEC",
+            "skill": 8.3,
+            "team": "Ferrari",
+            "rarity": "epic",
+            "perks": [],
+            "obtained_at": "2026-05-29T01:53:56.169974",
+            "caught_at": "2026-05-29T01:53:56.169974"
           }
         ],
         "cars": [
@@ -1480,6 +1492,18 @@
             "perks": [],
             "obtained_at": "2026-05-28T16:36:55.312306",
             "caught_at": "2026-05-28T16:36:55.312306"
+          },
+          {
+            "id": "04B9EFF",
+            "type": "driver",
+            "name": "Isack Hadjar",
+            "code": "HAD",
+            "skill": 6.7,
+            "team": "RB",
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-29T01:49:13.402803",
+            "caught_at": "2026-05-29T01:49:13.402803"
           }
         ],
         "cars": [
@@ -1604,6 +1628,30 @@
             "perks": [],
             "obtained_at": "2026-05-28T15:44:41.270368",
             "caught_at": "2026-05-28T15:44:41.270368"
+          },
+          {
+            "id": "D59B410",
+            "type": "car",
+            "name": "Williams FW44",
+            "team": "Williams",
+            "top_speed": 338,
+            "handling": 6.2,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-29T01:09:58.422025",
+            "caught_at": "2026-05-29T01:09:58.422025"
+          },
+          {
+            "id": "DC499D2",
+            "type": "car",
+            "name": "Williams FW44",
+            "team": "Williams",
+            "top_speed": 338,
+            "handling": 6.2,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-05-29T01:31:03.493682",
+            "caught_at": "2026-05-29T01:31:03.493682"
           }
         ],
         "team_assets": []
