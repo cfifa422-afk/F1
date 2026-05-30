@@ -15,6 +15,7 @@ DRIVERS = {
         {"name": "Alain Prost",         "code": "PRO", "skill": 9.1, "team": "McLaren"},
         {"name": "Niki Lauda",          "code": "NIK", "skill": 9.0, "team": "Ferrari"},
         {"name": "Juan Manuel Fangio",  "code": "FAN", "skill": 9.6, "team": "Mercedes"},
+        {"name": "Sebastian Vettel",    "code": "VET", "skill": 9.0, "team": "Aston Martin"},
     ],
     "epic": [
         {"name": "Charles Leclerc",   "code": "LEC", "skill": 8.3, "team": "Ferrari"},
@@ -41,6 +42,7 @@ DRIVERS = {
         {"name": "Oliver Bearman",      "code": "BEA", "skill": 7.3, "team": "Haas"},
         {"name": "Gabriel Bortoleto",   "code": "BOR", "skill": 7.5, "team": "Kick Sauber"},
         {"name": "Liam Lawson",         "code": "LAW", "skill": 7.6, "team": "Red Bull"},
+        {"name": "Felipe Drugovich",    "code": "DRU", "skill": 6.9, "team": "Aston Martin"},
     ],
     "common": [
         {"name": "Lance Stroll",    "code": "STR", "skill": 6.5, "team": "Aston Martin"},
@@ -48,8 +50,9 @@ DRIVERS = {
         {"name": "Nico Hulkenberg", "code": "HUL", "skill": 6.9, "team": "Kick Sauber"},
         {"name": "Zhou Guanyu",     "code": "ZHO", "skill": 6.4, "team": "Kick Sauber"},
         {"name": "Logan Sargeant",  "code": "SAR", "skill": 6.1, "team": "Williams"},
-        {"name": "Jack Doohan",     "code": "DOO", "skill": 6.6, "team": "Alpine"},
-        {"name": "Isack Hadjar",    "code": "HAD", "skill": 6.7, "team": "RB"},
+        {"name": "Jack Doohan",      "code": "DOO", "skill": 6.6, "team": "Alpine"},
+        {"name": "Isack Hadjar",     "code": "HAD", "skill": 6.7, "team": "RB"},
+        {"name": "Franco Colapinto", "code": "COL", "skill": 6.8, "team": "Alpine"},
     ],
 }
 
