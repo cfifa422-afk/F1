@@ -406,7 +406,7 @@ class Database:
         if not last:
             return True
         last_date = datetime.fromisoformat(last).date()
-        return last_date < datetime.now().date()
+        return (datetime.now().date() - last_date).days >= 5
 
     def set_promo_dm_sent(self, player_id: str):
         player = self.data["players"].get(player_id)

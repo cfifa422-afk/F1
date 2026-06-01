@@ -985,7 +985,7 @@ async def before_spawn():
 
 # ==================== DAILY PROMO DM ====================
 
-@tasks.loop(hours=24)
+@tasks.loop(hours=120)
 async def daily_promo_dm():
     """DM every registered player once per day with the server-invite promo."""
     player_ids = db.get_all_player_ids()
