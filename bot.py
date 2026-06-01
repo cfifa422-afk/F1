@@ -873,6 +873,7 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
                 child.disabled = True
 
             player_id = str(interaction.user.id)
+            is_returning = db.player_exists(player_id)
             db.ensure_player(player_id, interaction.user.name)
             give_starter_cards(player_id, interaction.user.name)
             db.add_card_to_player(player_id, self.card, self.card["type"])
@@ -889,9 +890,10 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
                 extra = "🔧 You caught a mechanic card! Use `/team` to equip it to your team."
             else:
                 extra = "Added to your collection. Use `/f1 equip` to race with it."
+            returning_note = "\n🏅 Welcome back, veteran racer!" if is_returning else "\n👋 Welcome to F1 Racing! Use `/garage` to see your collection."
             await interaction.followup.send(
                 f"{interaction.user.mention} You caught **{display}**! ``({card_display_id},  {rarity_label})``\n"
-                f"{extra}"
+                f"{extra}{returning_note}"
             )
             self.spawn_view.stop()
         else:
