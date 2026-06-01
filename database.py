@@ -3,6 +3,13 @@ import os
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 
+try:
+    from replit import db as _replit_db
+    _REPLIT_DB_KEY = "f1_data_backup"
+    _USE_REPLIT_DB = True
+except Exception:
+    _USE_REPLIT_DB = False
+
 # ==================== UPGRADE CONSTANTS ====================
 
 UPGRADE_STATS = ["engine", "aero", "brakes", "acceleration", "suspension"]
@@ -24,22 +31,46 @@ class Database:
     def __init__(self, db_file: str = "f1_data.json"):
         self.db_file = db_file
         self.data = self._load_data()
+        self._backup_to_replit_db()
 
     def _load_data(self) -> Dict:
         if os.path.exists(self.db_file):
             try:
                 with open(self.db_file, "r") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                if data.get("players"):
+                    return data
             except Exception:
-                return self._create_empty_db()
+                pass
+        # Local file missing or empty — try to restore from Replit DB
+        if _USE_REPLIT_DB:
+            try:
+                backup = _replit_db.get(_REPLIT_DB_KEY)
+                if backup:
+                    data = json.loads(str(backup))
+                    print("✅ Restored f1_data from Replit DB backup")
+                    with open(self.db_file, "w") as f:
+                        json.dump(data, f, indent=2, default=str)
+                    return data
+            except Exception as e:
+                print(f"⚠️ Could not restore from Replit DB: {e}")
         return self._create_empty_db()
 
     def _create_empty_db(self) -> Dict:
         return {"players": {}, "matches": [], "leaderboard": [], "spawn_channels": {}}
 
+    def _backup_to_replit_db(self):
+        if _USE_REPLIT_DB and self.data.get("players"):
+            try:
+                _replit_db[_REPLIT_DB_KEY] = json.dumps(self.data, default=str)
+                print(f"☁️  Replit DB backup saved ({len(self.data['players'])} players)")
+            except Exception as e:
+                print(f"⚠️ Replit DB backup failed: {e}")
+
     def _save_data(self):
         with open(self.db_file, "w") as f:
             json.dump(self.data, f, indent=2, default=str)
+        self._backup_to_replit_db()
 
     def _migrate_player(self, player: Dict) -> Dict:
         """Ensure old players have all new fields."""
