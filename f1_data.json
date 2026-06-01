@@ -4,7 +4,7 @@
       "id": "1141690369445216326",
       "username": "krazymatrix_",
       "created_at": "2026-05-27T07:43:18.856357",
-      "coins": 0,
+      "coins": 8000,
       "equipped": {
         "driver_id": "9602B25",
         "car_id": "333AE23",
@@ -442,6 +442,20 @@
             "perks": [],
             "obtained_at": "2026-06-01T07:37:04.074117",
             "caught_at": "2026-06-01T07:37:04.074117"
+          },
+          {
+            "id": "534A14D",
+            "type": "driver",
+            "name": "Alex Albon",
+            "code": "ALB",
+            "skill": 6.8,
+            "team": "Williams",
+            "rarity": "common",
+            "perks": [
+              "rain_master"
+            ],
+            "obtained_at": "2026-06-01T07:39:49.086892",
+            "caught_at": "2026-06-01T07:39:49.086892"
           }
         ],
         "cars": [
@@ -5375,11 +5389,11 @@
       },
       "achievements": [],
       "upgrades": {
-        "engine": 0,
-        "aero": 0,
-        "brakes": 0,
-        "acceleration": 0,
-        "suspension": 0
+        "engine": 5,
+        "aero": 5,
+        "brakes": 5,
+        "acceleration": 5,
+        "suspension": 5
       },
       "last_promo_dm": "2026-06-01T06:14:05.250925"
     },
