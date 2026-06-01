@@ -65,7 +65,7 @@ def apply_rewards_to_all_players(db: Database):
         given_cards.append(legendary)
         db.add_card_to_player(player_id, legendary, legendary["type"])
 
-        for _ in range(10):
+        for _ in range(5):
             card = generate_card("rare")
             given_cards.append(card)
             db.add_card_to_player(player_id, card, card["type"])
@@ -127,10 +127,11 @@ async def on_ready():
                 f"As a **compensation**, we've added the following to your account:\n\n"
                 f"🏆 **1 Legendary Card**\n"
                 f"  {format_card_line(legendary_card)}\n\n"
-                f"🔵 **10 Rare Cards**, including:\n{rare_preview}\n\n"
+                f"🔵 **5 Rare Cards**, including:\n{rare_preview}\n\n"
                 f"⚪ **10 Common Cards**, including:\n{common_preview}\n\n"
                 f"💰 **+8,000 Race Credits** added to your wallet\n\n"
                 f"We're sorry for any inconvenience. Thank you for racing with us! 🏁"
+                f"This is the new F1 bot add this to your servers!"
             )
 
             await user.send(msg)
