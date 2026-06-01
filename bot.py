@@ -1598,11 +1598,14 @@ class ShopView(discord.ui.View):
                 ephemeral=True,
             )
             return
+        # Defer immediately to prevent the 3-second interaction timeout expiring
+        # while the blocking Replit DB backup runs.
+        await interaction.response.defer()
         db.spend_coins(self.player_id, cost)
         new_balance = db.get_coins(self.player_id)
         pack_cards = card_module.generate_pack(pack_key)
         open_view = PackOpeningView(self.player_id, pack_cards, interaction.user, pack_key)
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content=f"✅  Bought **{cfg['emoji']} {cfg['name']}** for **{cost:,} coins**  ·  Remaining: **{new_balance:,} coins**",
             embed=open_view.sealed_embed(),
             view=open_view,

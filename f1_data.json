@@ -4,7 +4,7 @@
       "id": "1141690369445216326",
       "username": "krazymatrix_",
       "created_at": "2026-05-27T07:43:18.856357",
-      "coins": 8000,
+      "coins": 0,
       "equipped": {
         "driver_id": "9602B25",
         "car_id": "333AE23",
@@ -404,6 +404,44 @@
             ],
             "obtained_at": "2026-06-01T07:09:43.084386",
             "caught_at": "2026-06-01T07:09:43.084386"
+          },
+          {
+            "id": "996C158",
+            "type": "driver",
+            "name": "Michael Schumacher",
+            "code": "MSC",
+            "skill": 9.4,
+            "team": "Ferrari",
+            "rarity": "legendary",
+            "perks": [],
+            "obtained_at": "2026-06-01T07:37:01.393428",
+            "caught_at": "2026-06-01T07:37:01.393428"
+          },
+          {
+            "id": "FAC9C8B",
+            "type": "driver",
+            "name": "Alain Prost",
+            "code": "PRO",
+            "skill": 9.1,
+            "team": "McLaren",
+            "rarity": "legendary",
+            "perks": [
+              "rain_master"
+            ],
+            "obtained_at": "2026-06-01T07:37:03.579402",
+            "caught_at": "2026-06-01T07:37:03.579402"
+          },
+          {
+            "id": "7188BFE",
+            "type": "driver",
+            "name": "Kevin Magnussen",
+            "code": "MAG",
+            "skill": 7.0,
+            "team": "Haas",
+            "rarity": "rare",
+            "perks": [],
+            "obtained_at": "2026-06-01T07:37:04.074117",
+            "caught_at": "2026-06-01T07:37:04.074117"
           }
         ],
         "cars": [
@@ -738,6 +776,18 @@
             "perks": [],
             "obtained_at": "2026-06-01T07:09:43.084386",
             "caught_at": "2026-06-01T07:09:43.084386"
+          },
+          {
+            "id": "FFF3D74",
+            "type": "car",
+            "name": "Haas VF-23",
+            "team": "Haas",
+            "top_speed": 342,
+            "handling": 6.5,
+            "rarity": "common",
+            "perks": [],
+            "obtained_at": "2026-06-01T07:35:01.878239",
+            "caught_at": "2026-06-01T07:35:01.878239"
           }
         ],
         "team_assets": [
@@ -818,6 +868,32 @@
             "rarity": "epic",
             "obtained_at": "2026-05-30T06:23:11.860824",
             "caught_at": "2026-05-30T06:23:11.860824"
+          },
+          {
+            "id": "908178D",
+            "type": "team_asset",
+            "name": "Ferrari Strategy Team",
+            "role": "Strategists",
+            "team": "Ferrari",
+            "effect": "fuel_efficiency",
+            "bonus": 0.12,
+            "description": "+12% fuel efficiency per lap",
+            "rarity": "epic",
+            "obtained_at": "2026-06-01T07:37:01.910865",
+            "caught_at": "2026-06-01T07:37:01.910865"
+          },
+          {
+            "id": "842E4D9",
+            "type": "team_asset",
+            "name": "Pirelli Engineers",
+            "role": "Tyre Specialists",
+            "team": "Pirelli",
+            "effect": "tire_wear",
+            "bonus": 0.2,
+            "description": "-20% tyre degradation rate",
+            "rarity": "epic",
+            "obtained_at": "2026-06-01T07:37:02.558418",
+            "caught_at": "2026-06-01T07:37:02.558418"
           }
         ]
       },
@@ -5267,6 +5343,18 @@
             "perks": [],
             "obtained_at": "2026-06-01T07:09:43.084386",
             "caught_at": "2026-06-01T07:09:43.084386"
+          },
+          {
+            "id": "388AA2E",
+            "type": "car",
+            "name": "Red Bull RB18",
+            "team": "Red Bull",
+            "top_speed": 390,
+            "handling": 8.8,
+            "rarity": "epic",
+            "perks": [],
+            "obtained_at": "2026-06-01T07:36:39.400261",
+            "caught_at": "2026-06-01T07:36:39.400261"
           }
         ],
         "team_assets": [
