@@ -5187,6 +5187,18 @@
             "perks": [],
             "obtained_at": "2026-06-01T07:30:15.144559",
             "caught_at": "2026-06-01T07:30:15.144559"
+          },
+          {
+            "id": "A5528EA",
+            "type": "driver",
+            "name": "Max Verstappen",
+            "code": "VER",
+            "skill": 9.2,
+            "team": "Red Bull",
+            "rarity": "legendary",
+            "perks": [],
+            "obtained_at": "2026-06-01T07:41:36.171174",
+            "caught_at": "2026-06-01T07:41:36.171174"
           }
         ],
         "cars": [
@@ -5389,11 +5401,11 @@
       },
       "achievements": [],
       "upgrades": {
-        "engine": 5,
-        "aero": 5,
-        "brakes": 5,
-        "acceleration": 5,
-        "suspension": 5
+        "engine": 0,
+        "aero": 0,
+        "brakes": 0,
+        "acceleration": 0,
+        "suspension": 0
       },
       "last_promo_dm": "2026-06-01T06:14:05.250925"
     },
