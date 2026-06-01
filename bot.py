@@ -807,7 +807,7 @@ _guild_last_message: Dict[str, float] = {}
 _guild_last_spawn: Dict[str, float] = {}
 
 SPAWN_INTERVAL_ACTIVE   = 15 * 60   # seconds — chat active in last 10 min
-SPAWN_INTERVAL_IDLE     = 20 * 60   # seconds — no recent chat
+SPAWN_INTERVAL_IDLE     = 40 * 60   # seconds — no recent chat
 ACTIVITY_WINDOW         = 10 * 60   # seconds — "active" if message within this window
 
 
@@ -835,6 +835,9 @@ async def on_ready():
     if not spawn_wild_card.is_running():
         spawn_wild_card.start()
         print("🃏 Wild card spawn loop started (20 min idle / 15 min active)")
+    if not daily_promo_dm.is_running():
+        daily_promo_dm.start()
+        print("📨 Daily promo DM loop started")
 
 
 # ==================== WILD CARD SPAWN SYSTEM ====================
@@ -980,9 +983,50 @@ async def before_spawn():
     await bot.wait_until_ready()
 
 
+# ==================== DAILY PROMO DM ====================
+
+@tasks.loop(hours=24)
+async def daily_promo_dm():
+    """DM every registered player once per day with the server-invite promo."""
+    player_ids = db.get_all_player_ids()
+    sent = 0
+    skipped = 0
+    for pid in player_ids:
+        if not db.should_send_promo_dm(pid):
+            skipped += 1
+            continue
+        try:
+            user = await bot.fetch_user(int(pid))
+            await user.send(
+                f"👋 Hey {user.mention}!\n\n"
+                f"🏎️ **Want exclusive rewards?**\n"
+                f"If you add this bot to your servers and contact **huh_34**, "
+                f"you'll receive **special rewards** for helping grow the F1 Racing community!\n\n"
+                f"🏆 Don't miss out — contact **huh_34** today!"
+            )
+            db.set_promo_dm_sent(pid)
+            sent += 1
+            await asyncio.sleep(1)
+        except discord.Forbidden:
+            db.set_promo_dm_sent(pid)
+            skipped += 1
+        except discord.NotFound:
+            skipped += 1
+        except Exception as e:
+            print(f"⚠️ Failed to send promo DM to {pid}: {e}")
+    print(f"📨 Daily promo DM: sent={sent}, skipped={skipped}")
+
+
+@daily_promo_dm.before_loop
+async def before_promo_dm():
+    await bot.wait_until_ready()
+
+
 # ==================== CONFIG COMMANDS ====================
 
 def _is_admin(interaction: discord.Interaction) -> bool:
+    if not interaction.guild:
+        return False
     return (
         interaction.user.guild_permissions.manage_guild
         or interaction.user.guild_permissions.administrator

@@ -48,6 +48,7 @@ class Database:
         player["equipped"].setdefault("team_assets", [])
         player.setdefault("last_daily_pack", None)
         player.setdefault("last_weekly_pack", None)
+        player.setdefault("last_promo_dm", None)
         player.setdefault("achievements", [])
         player.setdefault("upgrades", {s: 0 for s in UPGRADE_STATS})
         if "cards" not in player:
@@ -75,6 +76,7 @@ class Database:
             "equipped": {"driver_id": None, "car_id": None, "team_assets": []},
             "last_daily_pack": None,
             "last_weekly_pack": None,
+            "last_promo_dm": None,
             "stats": {
                 "wins": 0,
                 "losses": 0,
@@ -392,6 +394,25 @@ class Database:
         elif points >= 500:
             return "Silver"
         return "Bronze"
+
+    def get_all_player_ids(self) -> List[str]:
+        return list(self.data["players"].keys())
+
+    def should_send_promo_dm(self, player_id: str) -> bool:
+        player = self.get_player(player_id)
+        if not player:
+            return False
+        last = player.get("last_promo_dm")
+        if not last:
+            return True
+        last_date = datetime.fromisoformat(last).date()
+        return last_date < datetime.now().date()
+
+    def set_promo_dm_sent(self, player_id: str):
+        player = self.data["players"].get(player_id)
+        if player:
+            player["last_promo_dm"] = datetime.now().isoformat()
+            self._save_data()
 
     def get_leaderboard(self, limit: int = 10) -> List[Dict]:
         players = list(self.data["players"].values())
