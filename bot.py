@@ -2337,6 +2337,55 @@ class ReactionChallengeView(discord.ui.View):
         await self._handle(interaction, "down")
 
 
+class SinglePlayerReactionView(discord.ui.View):
+    """Reaction challenge for one player only — staggered per-player in channel."""
+
+    def __init__(self, direction: str, player: discord.Member):
+        super().__init__(timeout=5.0)
+        self.direction = direction
+        self.player    = player
+        self.result: Optional[tuple] = None   # (correct: bool, elapsed: float)
+        self.done      = asyncio.Event()
+        self._start    = time.time()
+
+    async def _handle(self, interaction: discord.Interaction, clicked: str):
+        if interaction.user.id != self.player.id:
+            await interaction.response.send_message("❌ This challenge isn't for you!", ephemeral=True)
+            return
+        if self.result is not None:
+            await interaction.response.defer()
+            return
+        elapsed = time.time() - self._start
+        correct = clicked == self.direction
+        self.result = (correct, elapsed)
+        if correct:
+            await interaction.response.send_message(
+                f"✅ **{interaction.user.display_name}** — nailed it! `{elapsed:.2f}s`", ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ **{interaction.user.display_name}** — wrong direction! Penalty incoming.", ephemeral=True
+            )
+        self.done.set()
+        self.stop()
+
+    @discord.ui.button(label="◀  LEFT",  style=discord.ButtonStyle.primary, row=0)
+    async def btn_left(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "left")
+
+    @discord.ui.button(label="RIGHT  ▶", style=discord.ButtonStyle.primary, row=0)
+    async def btn_right(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "right")
+
+    @discord.ui.button(label="▲  UP",    style=discord.ButtonStyle.primary, row=0)
+    async def btn_up(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "up")
+
+    @discord.ui.button(label="▼  DOWN",  style=discord.ButtonStyle.primary, row=0)
+    async def btn_down(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "down")
+
+
 class ScenarioView(discord.ui.View):
     """Shown at key race moments — both players pick a tactic then simulation continues."""
 
@@ -2610,101 +2659,128 @@ async def run_auto_race(
             except Exception:
                 pass
 
-            # ── REACTION CHALLENGE ────────────────────────────────
+            # ── REACTION CHALLENGE (staggered per-player) ─────────
             if turn_num in REACTION_TURNS and channel:
                 await asyncio.sleep(1.2)
                 direction = random.choice(REACTION_DIRECTIONS)
                 dir_label = REACTION_LABELS[direction]
 
-                # Send reaction GIF if available
                 await _send_event_gif(channel, "reaction", delete_after=5.0)
 
-                rv = ReactionChallengeView(direction, p1_user, p2_user)
-                react_embed = discord.Embed(
-                    title="⚡  REACTION CHALLENGE!",
-                    description=(
-                        f"## Hit  **{dir_label}**  as fast as you can!\n\n"
-                        f"4 directions — first correct click wins the advantage!\n"
-                        f"❌ Wrong direction = penalty  |  ⏱️ No reaction = penalty"
-                    ),
-                    color=0xF1C40F,
-                )
-                react_embed.set_footer(text="⏱️  4 seconds — GO!")
-
-                react_msg = None
-                try:
-                    # Ping both players so they see the challenge
-                    await channel.send(
-                        f"⚡ {p1_user.mention} {p2_user.mention} — **REACTION CHALLENGE!** Hit  **{dir_label}**  NOW!",
-                        delete_after=5,
+                def _reaction_embed(player: discord.Member) -> discord.Embed:
+                    e = discord.Embed(
+                        title="⚡  REACTION CHALLENGE!",
+                        description=(
+                            f"{player.mention} — Hit  **{dir_label}**  as fast as you can!\n\n"
+                            f"4 directions · only YOU can click this one\n"
+                            f"❌ Wrong = penalty  |  ⏱️ Miss = penalty"
+                        ),
+                        color=0xF1C40F,
                     )
-                    react_msg = await channel.send(embed=react_embed, view=rv)
+                    e.set_footer(text="⏱️  4 seconds — GO!")
+                    return e
+
+                # ── Send P1's challenge first ──
+                rv1 = SinglePlayerReactionView(direction, p1_user)
+                msg1 = None
+                try:
+                    await channel.send(
+                        f"⚡ {p1_user.mention} — **YOUR REACTION!** Hit  **{dir_label}**  NOW!",
+                        delete_after=6,
+                    )
+                    msg1 = await channel.send(embed=_reaction_embed(p1_user), view=rv1)
                 except Exception:
                     pass
 
+                # Start waiting for P1 in background while we stagger
+                p1_task = asyncio.create_task(
+                    asyncio.wait_for(rv1.done.wait(), timeout=4.0)
+                )
+
+                # ── Stagger: 2–3 s before P2 gets their challenge ──
+                stagger = random.uniform(2.0, 3.0)
+                await asyncio.sleep(stagger)
+
+                # ── Send P2's challenge ──
+                rv2 = SinglePlayerReactionView(direction, p2_user)
+                msg2 = None
                 try:
-                    await asyncio.wait_for(rv.done.wait(), timeout=4.0)
+                    await channel.send(
+                        f"⚡ {p2_user.mention} — **YOUR REACTION!** Hit  **{dir_label}**  NOW!",
+                        delete_after=6,
+                    )
+                    msg2 = await channel.send(embed=_reaction_embed(p2_user), view=rv2)
+                except Exception:
+                    pass
+
+                # Wait for P2's full 4 s window
+                try:
+                    await asyncio.wait_for(rv2.done.wait(), timeout=4.0)
                 except asyncio.TimeoutError:
-                    rv.stop()
+                    rv2.stop()
 
-                # Apply gap advantages / penalties
-                p1_uid = str(p1_user.id)
-                p2_uid = str(p2_user.id)
-                p1_click = rv.clicks.get(p1_uid)
-                p2_click = rv.clicks.get(p2_uid)
+                # Clean up P1's background task
+                if not rv1.done.is_set():
+                    rv1.stop()
+                p1_task.cancel()
+                try:
+                    await p1_task
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
 
-                correct_clicks = []
-                if p1_click and p1_click[0]:
-                    correct_clicks.append((p1_user, p1_click[1], "p1"))
-                if p2_click and p2_click[0]:
-                    correct_clicks.append((p2_user, p2_click[1], "p2"))
-                correct_clicks.sort(key=lambda x: x[1])   # fastest first
+                # ── Evaluate results ──
+                p1_result = rv1.result   # (correct, elapsed) or None
+                p2_result = rv2.result
 
                 result_lines = []
 
-                # Reward correct clickers — fastest correct click wins 0.5s advantage
+                correct_clicks = []
+                if p1_result and p1_result[0]:
+                    correct_clicks.append((p1_user, p1_result[1], "p1"))
+                if p2_result and p2_result[0]:
+                    correct_clicks.append((p2_user, p2_result[1], "p2"))
+                correct_clicks.sort(key=lambda x: x[1])
+
                 for i, (user, elapsed, side) in enumerate(correct_clicks):
-                    gain = 0.5 if i == 0 else 0.0    # only the winner gets the gap bonus
-                    if i == 0:
+                    if i == 0:       # fastest correct gets the gap bonus
                         if side == "p1":
-                            race.gap -= gain
+                            race.gap -= 0.5
                         else:
-                            race.gap += gain
+                            race.gap += 0.5
                     medal = "🥇" if i == 0 else "🥈"
-                    msg = f"{medal} **{user.display_name}** reacted in `{elapsed:.2f}s`"
+                    line = f"{medal} **{user.display_name}** reacted in `{elapsed:.2f}s`"
                     if i == 0:
-                        msg += " — **+0.5s advantage!** 🚀"
-                    result_lines.append(msg)
+                        line += " — **+0.5s advantage!** 🚀"
+                    result_lines.append(line)
 
-                # Wrong-direction penalty
-                if p1_click and not p1_click[0]:
+                if p1_result and not p1_result[0]:
                     race.gap += 2.0
-                    result_lines.append(f"❌ **{p1_user.display_name}** clicked the wrong direction — **+2.0s penalty!**")
-                if p2_click and not p2_click[0]:
+                    result_lines.append(f"❌ **{p1_user.display_name}** wrong direction — **+2.0s penalty!**")
+                if p2_result and not p2_result[0]:
                     race.gap -= 2.0
-                    result_lines.append(f"❌ **{p2_user.display_name}** clicked the wrong direction — **+2.0s penalty!**")
+                    result_lines.append(f"❌ **{p2_user.display_name}** wrong direction — **+2.0s penalty!**")
 
-                # No-reaction penalty (didn't click at all within 4s)
-                if not p1_click:
+                if not p1_result:
                     race.gap += 0.3
-                    result_lines.append(f"⏱️ **{p1_user.display_name}** didn't react in time — **+0.3s penalty!**")
-                if not p2_click:
+                    result_lines.append(f"⏱️ **{p1_user.display_name}** didn't react — **+0.3s penalty!**")
+                if not p2_result:
                     race.gap -= 0.3
-                    result_lines.append(f"⏱️ **{p2_user.display_name}** didn't react in time — **+0.3s penalty!**")
+                    result_lines.append(f"⏱️ **{p2_user.display_name}** didn't react — **+0.3s penalty!**")
 
                 if not result_lines:
-                    result_lines.append("⏱️  Nobody reacted — both take a 0.3s penalty.")
+                    result_lines.append("⏱️  Neither player reacted — no gap change.")
 
-                if react_msg:
-                    result_embed = discord.Embed(
-                        title="✅  Reaction Results",
-                        description="\n".join(result_lines),
-                        color=0x2ECC71,
-                    )
-                    try:
-                        await react_msg.edit(embed=result_embed, view=None)
-                    except Exception:
-                        pass
+                result_embed = discord.Embed(
+                    title="✅  Reaction Results",
+                    description="\n".join(result_lines),
+                    color=0x2ECC71,
+                )
+                for m in (msg1, msg2):
+                    if m:
+                        try:
+                            await m.edit(embed=result_embed, view=None)
+                        except Exception:
+                            pass
                 await asyncio.sleep(2.0)
 
             elif turn_num < race.max_turns:
