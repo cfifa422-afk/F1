@@ -49,12 +49,13 @@ class Car:
 
 
 class Driver:
-    def __init__(self, driver_id: str, name: str, code: str, skill: float, rarity: str):
+    def __init__(self, driver_id: str, name: str, code: str, skill: float, rarity: str, perks: List[str] = None):
         self.driver_id = driver_id
         self.name = name
         self.code = code
         self.skill = skill
         self.rarity = rarity
+        self.perks = perks or []
 
     def get_skill_bonus(self) -> float:
         return 1.0 + (self.skill / 10) * 0.1
@@ -145,14 +146,18 @@ class RaceEngine:
             race.p1_fuel = 100.0
             race.p1_tire_wear = 0.0
             race.p1_tire_type = self._get_optimal_tire(race, event)
-            p1_time = -3.2
+            pit_bonus_p1 = race.p1_car.stats.get("pit_time_bonus", 0.0)
+            crew_chief_p1 = "pit_crew_chief" in race.p1_driver.perks
+            p1_time = -3.2 + pit_bonus_p1 + (0.5 if crew_chief_p1 else 0.0)
 
         if p2_choice == "pit_stop":
             race.p2_pit_stops += 1
             race.p2_fuel = 100.0
             race.p2_tire_wear = 0.0
             race.p2_tire_type = self._get_optimal_tire(race, event)
-            p2_time = -3.2
+            pit_bonus_p2 = race.p2_car.stats.get("pit_time_bonus", 0.0)
+            crew_chief_p2 = "pit_crew_chief" in race.p2_driver.perks
+            p2_time = -3.2 + pit_bonus_p2 + (0.5 if crew_chief_p2 else 0.0)
 
         race.gap += (p2_time - p1_time)
 
@@ -189,10 +194,15 @@ class RaceEngine:
 
     def _calculate_lap_time(self, race: RaceState, player: str, choice: str, event: Optional[str]) -> float:
         car = race.p1_car if player == "p1" else race.p2_car
+        driver = race.p1_driver if player == "p1" else race.p2_driver
         tire_type = race.p1_tire_type if player == "p1" else race.p2_tire_type
         tire_wear = race.p1_tire_wear if player == "p1" else race.p2_tire_wear
 
         base_speed = car.stats["acceleration"]
+        # Driver skill bonus: skill 5.0→10.0 gives +0.4→+0.8
+        skill_bonus = (driver.skill / 10.0) * 0.8
+        # Handling gives a cornering edge (aero + suspension upgrades feed into this)
+        handling_bonus = (car.stats.get("handling", 7.0) / 10.0) * 0.3
         wear_penalty = (tire_wear / 100) * 2.0
         choice_impact = {"accelerate": 0.8, "same_speed": 0.0, "slow_down": -0.6, "pit_stop": -3.2}.get(choice, 0.0)
         tire_stats = {"soft": 1.05, "medium": 1.02, "hard": 1.0, "wet": 0.8}
@@ -208,21 +218,44 @@ class RaceEngine:
         if race.weather == "rain":
             weather_impact = 0.4 if tire_type == "wet" else -1.0
 
-        return base_speed * tire_bonus + choice_impact + event_modifier + weather_impact - wear_penalty
+        # Perk bonuses
+        perk_bonus = 0.0
+        perks = driver.perks
+        if "drs_specialist" in perks and event and "DRS" in event:
+            perk_bonus += 0.8
+        if "rain_master" in perks and race.weather == "rain":
+            perk_bonus += 2.5
+        if "consistency" in perks:
+            perk_bonus += 0.3
+
+        return base_speed * tire_bonus + choice_impact + event_modifier + weather_impact - wear_penalty + skill_bonus + handling_bonus + perk_bonus
 
     def _update_consumables(self, race: RaceState, player: str, choice: str):
-        fuel_burn = {"accelerate": 5.0, "same_speed": 3.0, "slow_down": 2.0, "pit_stop": 0.0}.get(choice, 3.0)
         car = race.p1_car if player == "p1" else race.p2_car
+        driver = race.p1_driver if player == "p1" else race.p2_driver
+        fuel_burn = {"accelerate": 5.0, "same_speed": 3.0, "slow_down": 2.0, "pit_stop": 0.0}.get(choice, 3.0)
         fuel_eff = car.stats["fuel_efficiency"]
+
+        # fuel_saver perk: -10% fuel consumption
+        if "fuel_saver" in driver.perks:
+            fuel_burn *= 0.9
+
+        # Tire wear scaled by brakes upgrade (tire_wear_rate baseline ~15; lower = better brakes)
+        base_tire_wear = {"accelerate": 8.0, "same_speed": 4.0, "slow_down": 2.0}.get(choice, 4.0)
+        tire_wear_rate = car.stats.get("tire_wear_rate", 15.0)
+        tire_wear_mult = tire_wear_rate / 15.0          # <1.0 with brakes upgrades = less wear
+        if "tire_master" in driver.perks:
+            tire_wear_mult *= 0.85                       # tire_master: -15% wear
+        actual_tire_wear = base_tire_wear * tire_wear_mult
 
         if player == "p1":
             race.p1_fuel -= fuel_burn * fuel_eff
             if choice != "pit_stop":
-                race.p1_tire_wear += {"accelerate": 8.0, "same_speed": 4.0, "slow_down": 2.0}.get(choice, 4.0)
+                race.p1_tire_wear += actual_tire_wear
         else:
             race.p2_fuel -= fuel_burn * fuel_eff
             if choice != "pit_stop":
-                race.p2_tire_wear += {"accelerate": 8.0, "same_speed": 4.0, "slow_down": 2.0}.get(choice, 4.0)
+                race.p2_tire_wear += actual_tire_wear
 
     def _get_optimal_tire(self, race: RaceState, event: Optional[str]) -> str:
         if race.weather == "rain" or (event and "Rain" in event):
@@ -279,6 +312,7 @@ def card_to_driver(card: Dict) -> Driver:
         code=card["code"],
         skill=card["skill"],
         rarity=card["rarity"],
+        perks=card.get("perks", []),
     )
 
 
@@ -350,9 +384,13 @@ def get_player_race_cards(player_id: str):
     race_car.top_speed = int(race_car.top_speed * mults["engine"])
 
     stats = race_car.stats
-    stats["acceleration"] = stats.get("acceleration", 5.0) * mults["acceleration"] * (1.0 + team_bonuses.get("acceleration", 0.0))
-    stats["handling"]     = stats.get("handling", 5.0)     * mults["aero"]         * (1.0 + team_bonuses.get("aero", 0.0))
-    stats["tire_wear_rate"]   = stats.get("tire_wear_rate", 1.0) * mults["brakes"]  * max(0.2, 1.0 - team_bonuses.get("tire_wear", 0.0))
+    # Engine boosts both top speed (above) and base acceleration/power
+    # Acceleration upgrade adds responsiveness on top of engine power
+    stats["acceleration"] = stats.get("acceleration", 5.0) * mults["engine"] * mults["acceleration"] * (1.0 + team_bonuses.get("acceleration", 0.0))
+    # Aero + Suspension both feed into handling (cornering stability)
+    stats["handling"]     = stats.get("handling", 5.0)     * mults["aero"] * mults["suspension"]    * (1.0 + team_bonuses.get("aero", 0.0))
+    # Brakes reduce tire_wear_rate (lower rate = less wear in _update_consumables)
+    stats["tire_wear_rate"]   = stats.get("tire_wear_rate", 15.0) * mults["brakes"] * max(0.2, 1.0 - team_bonuses.get("tire_wear", 0.0))
     stats["fuel_efficiency"]  = stats.get("fuel_efficiency", 1.0) * max(0.2, 1.0 - team_bonuses.get("fuel_efficiency", 0.0))
     stats["pit_time_bonus"]   = team_bonuses.get("pit_time", 0.0)
 
@@ -584,6 +622,28 @@ RACE_GIFS = [
     "https://media.giphy.com/media/l0MYyoYKBIRtjXJEQ/giphy.gif",
     "https://media.giphy.com/media/xT1Ra5h24Eliux3UVq/giphy.gif",
 ]
+
+# Per-event GIF files — place your GIFs in the race_gifs/ folder with these exact names.
+# Any missing file is silently skipped (no crash).
+EVENT_GIFS = {
+    "pit_window":    "race_gifs/pit_stop.gif",      # Turn 3: pit window opens
+    "drs_attack":    "race_gifs/overtake.gif",       # Turn 6: DRS overtake attack
+    "late_strategy": "race_gifs/speed_boost.gif",    # Turn 9: late push
+    "final_lap":     "race_gifs/final_lap.gif",      # Turn 11: white flag
+    "rain_call":     "race_gifs/rain.gif",            # Rain scenario override
+    "reaction":      "race_gifs/reaction.gif",        # Reaction challenge flash
+    "safety_car":    "race_gifs/safety_car.gif",      # Safety car random event
+}
+
+
+async def _send_event_gif(channel, gif_key: str, delete_after: float = 8.0):
+    """Send a local GIF file for the given event key. Silently skips if file missing."""
+    path = EVENT_GIFS.get(gif_key)
+    if path and os.path.exists(path):
+        try:
+            await channel.send(file=discord.File(path), delete_after=delete_after)
+        except Exception:
+            pass
 
 CHOICE_LABELS = {
     "accelerate": ("🚀", "Push Hard"),
@@ -2229,7 +2289,7 @@ class ReactionChallengeView(discord.ui.View):
     """A timed 4-direction button challenge that appears mid-race."""
 
     def __init__(self, direction: str, p1_user: discord.Member, p2_user: discord.Member):
-        super().__init__(timeout=2.0)
+        super().__init__(timeout=5.0)
         self.direction = direction
         self.p1_user   = p1_user
         self.p2_user   = p2_user
@@ -2448,6 +2508,9 @@ async def run_auto_race(
 
             if scenario:
                 # ── SCENARIO PAUSE ──────────────────────────────────
+                # Send scenario-specific GIF if available
+                await _send_event_gif(channel, scenario.get("id", ""), delete_after=10.0)
+
                 sv = ScenarioView(p1_user, p2_user, scenario, race, message, gif_url)
 
                 # Notify both players so they don't miss the decision
@@ -2553,6 +2616,9 @@ async def run_auto_race(
                 direction = random.choice(REACTION_DIRECTIONS)
                 dir_label = REACTION_LABELS[direction]
 
+                # Send reaction GIF if available
+                await _send_event_gif(channel, "reaction", delete_after=5.0)
+
                 rv = ReactionChallengeView(direction, p1_user, p2_user)
                 react_embed = discord.Embed(
                     title="⚡  REACTION CHALLENGE!",
@@ -2596,25 +2662,27 @@ async def run_auto_race(
 
                 result_lines = []
 
-                # Reward correct clickers — faster = bigger gain
+                # Reward correct clickers — fastest correct click wins 0.5s advantage
                 for i, (user, elapsed, side) in enumerate(correct_clicks):
-                    gain = 0.0 if i == 0 else 0.0
-                    if side == "p1":
-                        race.gap -= gain
-                    else:
-                        race.gap += gain
+                    gain = 0.5 if i == 0 else 0.0    # only the winner gets the gap bonus
+                    if i == 0:
+                        if side == "p1":
+                            race.gap -= gain
+                        else:
+                            race.gap += gain
                     medal = "🥇" if i == 0 else "🥈"
-                    result_lines.append(
-                        f"{medal} **{user.display_name}** reacted in `{elapsed:.2f}s` — **+{gain:.1f}s advantage!**"
-                    )
+                    msg = f"{medal} **{user.display_name}** reacted in `{elapsed:.2f}s`"
+                    if i == 0:
+                        msg += " — **+0.5s advantage!** 🚀"
+                    result_lines.append(msg)
 
                 # Wrong-direction penalty
                 if p1_click and not p1_click[0]:
                     race.gap += 2.0
-                    result_lines.append(f"❌ **{p1_user.display_name}** clicked the wrong direction — **+0.4s penalty!**")
+                    result_lines.append(f"❌ **{p1_user.display_name}** clicked the wrong direction — **+2.0s penalty!**")
                 if p2_click and not p2_click[0]:
                     race.gap -= 2.0
-                    result_lines.append(f"❌ **{p2_user.display_name}** clicked the wrong direction — **+0.4s penalty!**")
+                    result_lines.append(f"❌ **{p2_user.display_name}** clicked the wrong direction — **+2.0s penalty!**")
 
                 # No-reaction penalty (didn't click at all within 4s)
                 if not p1_click:
