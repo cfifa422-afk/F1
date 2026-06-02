@@ -6,6 +6,7 @@ import card_manager as _cm
 # ==================== DRIVER CARDS ====================
 
 DRIVERS = {
+    "mythic": [],
     "legendary": [
         {"name": "Lewis Hamilton",      "code": "HAM", "skill": 8.8, "team": "Ferrari"},
         {"name": "Max Verstappen",      "code": "VER", "skill": 9.2, "team": "Red Bull"},
@@ -59,6 +60,7 @@ DRIVERS = {
 # ==================== CAR CARDS ====================
 
 CARS = {
+    "mythic": [],
     "legendary": [
         {"name": "Mercedes AMG W14", "team": "Mercedes", "top_speed": 412, "handling": 9.2},
         {"name": "Red Bull RB19", "team": "Red Bull", "top_speed": 410, "handling": 9.4},
@@ -104,7 +106,7 @@ PACK_CONFIGS = {
         "card_count": 1,
         "cost": 0,
         "guaranteed": None,
-        "odds": {"legendary": 0.01, "epic": 0.07, "rare": 0.27, "common": 0.65},
+        "odds": {"mythic": 0.01, "legendary": 0.01, "epic": 0.07, "rare": 0.27, "common": 0.64},
     },
     "weekly": {
         "name": "Weekly Pack",
@@ -112,7 +114,7 @@ PACK_CONFIGS = {
         "card_count": 1,
         "cost": 0,
         "guaranteed": "rare",
-        "odds": {"legendary": 0.06, "epic": 0.18, "rare": 0.36, "common": 0.40},
+        "odds": {"mythic": 0.01, "legendary": 0.06, "epic": 0.18, "rare": 0.36, "common": 0.39},
     },
     "bronze": {
         "name": "Bronze Pack",
@@ -120,7 +122,7 @@ PACK_CONFIGS = {
         "card_count": 3,
         "cost": 500,
         "guaranteed": None,
-        "odds": {"legendary": 0.01, "epic": 0.07, "rare": 0.30, "common": 0.62},
+        "odds": {"mythic": 0.01, "legendary": 0.01, "epic": 0.07, "rare": 0.30, "common": 0.61},
     },
     "silver": {
         "name": "Silver Pack",
@@ -128,7 +130,7 @@ PACK_CONFIGS = {
         "card_count": 3,
         "cost": 1500,
         "guaranteed": "rare",
-        "odds": {"legendary": 0.04, "epic": 0.14, "rare": 0.37, "common": 0.45},
+        "odds": {"mythic": 0.01, "legendary": 0.04, "epic": 0.14, "rare": 0.37, "common": 0.44},
     },
     "gold": {
         "name": "Gold Pack",
@@ -136,7 +138,7 @@ PACK_CONFIGS = {
         "card_count": 5,
         "cost": 3500,
         "guaranteed": "epic",
-        "odds": {"legendary": 0.10, "epic": 0.30, "rare": 0.45, "common": 0.15},
+        "odds": {"mythic": 0.01, "legendary": 0.10, "epic": 0.30, "rare": 0.44, "common": 0.15},
     },
     "platinum": {
         "name": "Platinum Pack",
@@ -144,7 +146,7 @@ PACK_CONFIGS = {
         "card_count": 5,
         "cost": 8000,
         "guaranteed": "legendary",
-        "odds": {"legendary": 0.25, "epic": 0.40, "rare": 0.30, "common": 0.05},
+        "odds": {"mythic": 0.01, "legendary": 0.25, "epic": 0.40, "rare": 0.29, "common": 0.05},
     },
 }
 
@@ -155,11 +157,13 @@ SELL_VALUES = {
     "rare": 200,
     "epic": 600,
     "legendary": 1500,
+    "mythic": 5000,
 }
 
 # ==================== TEAM ASSETS ====================
 
 TEAM_ASSETS = {
+    "mythic": [],
     "legendary": [
         {"name": "Adrian Newey",    "role": "Chief Designer",      "team": "Red Bull",   "effect": "aero",            "bonus": 0.15, "description": "+15% aerodynamics & cornering"},
         {"name": "James Allison",   "role": "Technical Director",  "team": "Mercedes",   "effect": "acceleration",    "bonus": 0.12, "description": "+12% acceleration out of corners"},
@@ -213,10 +217,11 @@ def generate_team_asset(rarity: str) -> Dict:
 # ==================== WILD SPAWN ====================
 
 SPAWN_ODDS = {
-    "common": 0.55,
-    "rare": 0.30,
-    "epic": 0.12,
+    "mythic": 0.008,
     "legendary": 0.03,
+    "epic": 0.12,
+    "rare": 0.30,
+    "common": 0.542,
 }
 
 SPAWN_TEAM_CHANCE = 0.25  # 25% of wild spawns are team assets
@@ -230,6 +235,7 @@ def generate_spawn_card() -> Dict:
 # ==================== RARITY DISPLAY ====================
 
 RARITY_EMOJIS = {
+    "mythic": "🔱",
     "legendary": "👑",
     "epic": "💜",
     "rare": "💙",
@@ -237,6 +243,7 @@ RARITY_EMOJIS = {
 }
 
 RARITY_COLORS = {
+    "mythic": 0xFF4500,
     "legendary": 0xFFD700,
     "epic": 0x9B59B6,
     "rare": 0x3498DB,
@@ -244,6 +251,7 @@ RARITY_COLORS = {
 }
 
 RARITY_LABELS = {
+    "mythic": "MYTHIC",
     "legendary": "LEGENDARY",
     "epic": "EPIC",
     "rare": "RARE",

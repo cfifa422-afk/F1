@@ -36,7 +36,7 @@ class Car:
 
     def _calculate_stats(self) -> Dict:
         base_multiplier = self.top_speed / 350
-        rarity_bonus = {"legendary": 1.15, "epic": 1.10, "rare": 1.05, "common": 1.00}.get(self.rarity, 1.0)
+        rarity_bonus = {"mythic": 1.25, "legendary": 1.15, "epic": 1.10, "rare": 1.05, "common": 1.00}.get(self.rarity, 1.0)
         multiplier = base_multiplier * rarity_bonus
         return {
             "top_speed": self.top_speed,
@@ -1142,7 +1142,7 @@ async def config_adddriver(
     code: str,
     skill: float,
     team: str,
-    rarity: Literal["common", "rare", "epic", "legendary"],
+    rarity: Literal["common", "rare", "epic", "legendary", "mythic"],
     card_image: Optional[discord.Attachment] = None,
     spawn_image: Optional[discord.Attachment] = None,
 ):
@@ -1189,7 +1189,7 @@ async def config_addcar(
     team: str,
     top_speed: int,
     handling: float,
-    rarity: Literal["common", "rare", "epic", "legendary"],
+    rarity: Literal["common", "rare", "epic", "legendary", "mythic"],
     card_image: Optional[discord.Attachment] = None,
     spawn_image: Optional[discord.Attachment] = None,
 ):
@@ -1638,7 +1638,7 @@ class MultiSellView(discord.ui.View):
         self.player_id = player_id
         self.user = user
         # Starter cards are protected — cannot be sold
-        RARITY_ORDER = {"common": 0, "rare": 1, "epic": 2, "legendary": 3}
+        RARITY_ORDER = {"common": 0, "rare": 1, "epic": 2, "legendary": 3, "mythic": 4}
         self.starter_count = sum(
             1 for c in all_cards
             if c["id"].startswith("starter_driver_") or c["id"].startswith("starter_car_")
@@ -1817,7 +1817,7 @@ class MultiSellView(discord.ui.View):
             rarity_counts[c["rarity"]] = rarity_counts.get(c["rarity"], 0) + 1
 
         summary = []
-        for rarity in ("legendary", "epic", "rare", "common"):
+        for rarity in ("mythic", "legendary", "epic", "rare", "common"):
             cnt = rarity_counts.get(rarity, 0)
             if cnt:
                 emoji = card_module.RARITY_EMOJIS.get(rarity, "")
