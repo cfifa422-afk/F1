@@ -3914,6 +3914,336 @@ async def profile_slash(interaction: discord.Interaction, member: Optional[disco
 
 # ==================== MAIN ====================
 
+# ==================== CARD FUSION ====================
+
+FUSION_COST = 3  # duplicates required per fusion
+FUSION_RARITY_NEXT = {
+    "common":    "rare",
+    "rare":      "epic",
+    "epic":      "legendary",
+    "legendary": "mythic",
+}
+_FUSION_RARITY_RANK = {"legendary": 0, "epic": 1, "rare": 2, "common": 3}
+
+
+def _get_fuseable_groups(player_id: str) -> List[Dict]:
+    """Return groups of 3+ identical cards eligible for fusion, sorted by rarity desc."""
+    cards = db.get_player_cards(player_id)
+    groups = []
+    for card_type, card_list in [("driver", cards["drivers"]), ("car", cards["cars"])]:
+        by_name: Dict[str, List] = {}
+        for card in card_list:
+            by_name.setdefault(card["name"], []).append(card)
+        for name, dupes in by_name.items():
+            rarity = dupes[0]["rarity"]
+            if len(dupes) >= FUSION_COST and rarity in FUSION_RARITY_NEXT:
+                groups.append({
+                    "name":        name,
+                    "type":        card_type,
+                    "rarity":      rarity,
+                    "next_rarity": FUSION_RARITY_NEXT[rarity],
+                    "count":       len(dupes),
+                    "cards":       dupes,
+                })
+    groups.sort(key=lambda g: (_FUSION_RARITY_RANK.get(g["rarity"], 9), g["name"]))
+    return groups
+
+
+def _build_fused_card(source: Dict, next_rarity: str):
+    """Return (fused_card_dict, card_type) ready to give to the player."""
+    card_type = source.get("type", "driver")
+    new_id    = f"fused_{int(time.time())}_{random.randint(10000, 99999)}"
+    fused     = dict(source)
+    fused["id"]     = new_id
+    fused["rarity"] = next_rarity
+    # Always grant a perk on fusion
+    fused["perks"]  = [random.choice(list(card_module.PERKS.keys()))]
+
+    # Upgrade stats if a canonical entry exists in the next-rarity pool
+    if card_type == "driver":
+        match = next((d for d in card_module.DRIVERS.get(next_rarity, []) if d["name"] == source["name"]), None)
+        if match:
+            fused["skill"] = match["skill"]
+            fused["team"]  = match["team"]
+    else:
+        match = next((c for c in card_module.CARS.get(next_rarity, []) if c["name"] == source["name"]), None)
+        if match:
+            fused["top_speed"] = match["top_speed"]
+            fused["handling"]  = match["handling"]
+            fused["team"]      = match["team"]
+    return fused, card_type
+
+
+# ── Embed builders ──────────────────────────────────────────────────────────
+
+def _fusion_lab_embed(groups: List[Dict], user: discord.Member) -> discord.Embed:
+    driver_n = sum(1 for g in groups if g["type"] == "driver")
+    car_n    = sum(1 for g in groups if g["type"] == "car")
+    embed = discord.Embed(
+        title="🔬  CARD FUSION LAB",
+        description=(
+            "Sacrifice **3 identical cards** to forge a single higher-rarity version.\n"
+            "Every fused card receives a **guaranteed bonus perk**.\n\n"
+            "**— Rarity Chain —**\n"
+            "⚪ Common  →  💙 Rare  →  💜 Epic  →  👑 Legendary  →  🔱 Mythic\n\n"
+            f"**Available Fusions**\n"
+            f"👤 Driver groups: **{driver_n}**\n"
+            f"🏎️  Car groups:    **{car_n}**"
+        ),
+        color=0x5865F2,
+    )
+    embed.set_footer(text=f"{user.display_name}  ·  /fusion")
+    return embed
+
+
+def _fusion_select_embed(groups: List[Dict], filter_type: Optional[str], user: discord.Member) -> discord.Embed:
+    shown = [g for g in groups if filter_type is None or g["type"] == filter_type]
+    label = {"driver": "👤 Drivers", "car": "🏎️ Cars"}.get(filter_type, "All Cards")
+    embed = discord.Embed(
+        title=f"⚗️  FUSION — {label}",
+        description=(
+            f"Pick a card group from the dropdown to preview the fusion.\n"
+            f"**{FUSION_COST}×** identical cards are consumed per fusion.\n\u200b"
+        ),
+        color=0x5865F2,
+    )
+    if not shown:
+        embed.add_field(name="\u200b", value="❌  No eligible cards in this category.", inline=False)
+    else:
+        lines = [
+            f"{card_module.RARITY_EMOJIS.get(g['rarity'], '')} **{g['name']}**"
+            f"  ×{g['count']}  →  "
+            f"{card_module.RARITY_EMOJIS.get(g['next_rarity'], '')} **{g['next_rarity'].upper()}**"
+            for g in shown[:10]
+        ]
+        embed.add_field(name="Eligible Fusions", value="\n".join(lines), inline=False)
+    embed.set_footer(text=f"{user.display_name}  ·  /fusion")
+    return embed
+
+
+def _fusion_confirm_embed(group: Dict) -> discord.Embed:
+    e_from = card_module.RARITY_EMOJIS.get(group["rarity"], "")
+    e_to   = card_module.RARITY_EMOJIS.get(group["next_rarity"], "")
+    color  = card_module.RARITY_COLORS.get(group["next_rarity"], 0x5865F2)
+    desc = (
+        f"**CONSUMING**  *(3 copies destroyed)*\n"
+        f"```\n❌  {group['name']}  [{group['rarity'].upper()}]  ×{FUSION_COST}\n```\n"
+        f"⬇️  ⬇️  ⬇️\n\n"
+        f"**FORGED RESULT**\n"
+        f"```\n✨  {group['name']}  [{group['next_rarity'].upper()}]  + Bonus Perk\n```\n"
+        f"⚠️  This action **cannot be undone**."
+    )
+    return discord.Embed(title=f"🔥  FUSION PREVIEW  —  {e_from} → {e_to}", description=desc, color=color)
+
+
+def _fusion_result_embed(fused: Dict, user: discord.Member) -> discord.Embed:
+    emoji    = card_module.RARITY_EMOJIS.get(fused["rarity"], "")
+    color    = card_module.RARITY_COLORS.get(fused["rarity"], 0x5865F2)
+    perk_key = (fused.get("perks") or [None])[0]
+    perk     = card_module.PERKS.get(perk_key, {}) if perk_key else {}
+    type_tag = "👤 Driver" if fused.get("type") == "driver" else "🏎️ Car"
+
+    if fused.get("type") == "driver":
+        stats = f"Skill **{fused['skill']}/10**  ·  Team **{fused['team']}**"
+    else:
+        stats = f"**{fused['top_speed']} km/h**  ·  Handling **{fused.get('handling', '?')}/10**  ·  Team **{fused['team']}**"
+
+    desc = (
+        f"## {emoji}  {fused['name'].upper()}\n"
+        f"**{fused['rarity'].upper()}**  ·  {type_tag}\n\n"
+        f"{stats}\n\n"
+        f"🎁  **Bonus Perk Unlocked**\n"
+        f"**{perk.get('name', perk_key or '—')}** — {perk.get('description', '')}"
+    )
+    embed = discord.Embed(title="✨  FUSION COMPLETE!", description=desc, color=color)
+    embed.set_footer(text=f"{user.display_name}  ·  3 cards consumed")
+    return embed
+
+
+# ── UI Views ────────────────────────────────────────────────────────────────
+
+class FusionSelectView(discord.ui.View):
+    def __init__(self, player_id: str, user: discord.Member, filter_type: Optional[str] = None):
+        super().__init__(timeout=120)
+        self.player_id   = player_id
+        self.user        = user
+        self.filter_type = filter_type
+        self.groups      = _get_fuseable_groups(player_id)
+        self._rebuild()
+
+    def _owner(self, interaction: discord.Interaction) -> bool:
+        return str(interaction.user.id) == self.player_id
+
+    def _rebuild(self):
+        self.clear_items()
+        ft = self.filter_type
+
+        # ── Row 0: filter + cancel ──
+        for label, ftype in [("🔀 All", None), ("👤 Drivers", "driver"), ("🏎️ Cars", "car")]:
+            active = ft == ftype
+            btn = discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary,
+                row=0,
+            )
+            _ft = ftype
+            async def _filter_cb(i: discord.Interaction, _t=_ft):
+                if not self._owner(i):
+                    await i.response.send_message("Not your menu!", ephemeral=True); return
+                self.filter_type = _t
+                self._rebuild()
+                await i.response.edit_message(embed=_fusion_select_embed(self.groups, self.filter_type, self.user), view=self)
+            btn.callback = _filter_cb
+            self.add_item(btn)
+
+        cancel = discord.ui.Button(label="✖ Cancel", style=discord.ButtonStyle.danger, row=0)
+        async def _cancel(i: discord.Interaction):
+            if not self._owner(i):
+                await i.response.send_message("Not your menu!", ephemeral=True); return
+            await i.response.edit_message(content="Fusion cancelled.", embed=None, view=None)
+        cancel.callback = _cancel
+        self.add_item(cancel)
+
+        # ── Row 1: card group dropdown ──
+        shown = [g for g in self.groups if ft is None or g["type"] == ft]
+        if shown:
+            options = []
+            for g in shown[:25]:
+                e = card_module.RARITY_EMOJIS.get(g["rarity"], "")
+                options.append(discord.SelectOption(
+                    label=f"{g['name']}  ×{g['count']}"[:100],
+                    description=f"{g['rarity'].title()} → {g['next_rarity'].title()}"[:100],
+                    value=f"{g['type']}::{g['name']}::{g['rarity']}",
+                    emoji=e or None,
+                ))
+            sel = discord.ui.Select(placeholder="Choose a card group to fuse…", options=options, row=1)
+            async def _on_sel(i: discord.Interaction):
+                if not self._owner(i):
+                    await i.response.send_message("Not your menu!", ephemeral=True); return
+                val   = i.data["values"][0]
+                ctype, cname, crarity = val.split("::")
+                grp = next((g for g in self.groups if g["type"] == ctype and g["name"] == cname and g["rarity"] == crarity), None)
+                if not grp:
+                    await i.response.send_message("❌ Card group not found.", ephemeral=True); return
+                await i.response.edit_message(embed=_fusion_confirm_embed(grp), view=FusionConfirmView(self.player_id, self.user, grp))
+            sel.callback = _on_sel
+            self.add_item(sel)
+
+
+class FusionConfirmView(discord.ui.View):
+    def __init__(self, player_id: str, user: discord.Member, group: Dict):
+        super().__init__(timeout=60)
+        self.player_id = player_id
+        self.user      = user
+        self.group     = group
+
+    def _owner(self, interaction: discord.Interaction) -> bool:
+        return str(interaction.user.id) == self.player_id
+
+    @discord.ui.button(label="🔥  FUSE IT", style=discord.ButtonStyle.success, row=0)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._owner(interaction):
+            await interaction.response.send_message("Not your menu!", ephemeral=True); return
+        await interaction.response.defer()
+
+        # Re-validate — make sure copies still exist
+        current = _get_fuseable_groups(self.player_id)
+        grp = next(
+            (g for g in current
+             if g["type"] == self.group["type"]
+             and g["name"] == self.group["name"]
+             and g["rarity"] == self.group["rarity"]),
+            None,
+        )
+        if not grp:
+            await interaction.followup.edit_message(
+                interaction.message.id,
+                content="❌ You no longer have enough copies for this fusion.",
+                embed=None, view=None,
+            )
+            return
+
+        # Remove exactly 3 copies
+        removed = 0
+        for card in grp["cards"][:FUSION_COST]:
+            if db.remove_card(self.player_id, card["id"]):
+                removed += 1
+
+        if removed < FUSION_COST:
+            await interaction.followup.edit_message(
+                interaction.message.id,
+                content=f"❌ Only removed {removed}/{FUSION_COST} cards — fusion failed.",
+                embed=None, view=None,
+            )
+            return
+
+        fused, card_type = _build_fused_card(grp["cards"][0], grp["next_rarity"])
+        db.add_card_to_player(self.player_id, fused, card_type)
+        await interaction.followup.edit_message(
+            interaction.message.id,
+            embed=_fusion_result_embed(fused, self.user),
+            view=None,
+        )
+
+    @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary, row=0)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._owner(interaction):
+            await interaction.response.send_message("Not your menu!", ephemeral=True); return
+        view = FusionSelectView(self.player_id, self.user)
+        await interaction.response.edit_message(
+            embed=_fusion_select_embed(view.groups, view.filter_type, self.user), view=view
+        )
+
+    @discord.ui.button(label="✖ Cancel", style=discord.ButtonStyle.danger, row=0)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self._owner(interaction):
+            await interaction.response.send_message("Not your menu!", ephemeral=True); return
+        await interaction.response.edit_message(content="Fusion cancelled.", embed=None, view=None)
+
+
+# ── Slash command ────────────────────────────────────────────────────────────
+
+@bot.tree.command(name="fusion", description="Fuse 3 identical cards into a single higher-rarity card")
+async def fusion_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    await interaction.response.defer()
+
+    groups = _get_fuseable_groups(player_id)
+
+    if not groups:
+        embed = discord.Embed(
+            title="🔬  CARD FUSION LAB",
+            description=(
+                "Sacrifice **3 identical cards** to forge a higher-rarity version.\n"
+                "Every fused card receives a **guaranteed bonus perk**.\n\n"
+                "**— Rarity Chain —**\n"
+                "⚪ Common  →  💙 Rare  →  💜 Epic  →  👑 Legendary  →  🔱 Mythic\n\n"
+                "❌  **No eligible cards yet.**\n"
+                "Collect 3 duplicates of the same card to unlock fusion."
+            ),
+            color=0x5865F2,
+        )
+        embed.set_footer(text=f"{interaction.user.display_name}  ·  /fusion")
+        await interaction.followup.send(embed=embed)
+        return
+
+    view = FusionSelectView(player_id, interaction.user)
+    embed = discord.Embed(
+        title="🔬  CARD FUSION LAB",
+        description=(
+            "Sacrifice **3 identical cards** to forge a single higher-rarity version.\n"
+            "Every fused card receives a **guaranteed bonus perk**.\n\n"
+            "**— Rarity Chain —**\n"
+            "⚪ Common  →  💙 Rare  →  💜 Epic  →  👑 Legendary  →  🔱 Mythic\n\n"
+            f"**{len(groups)} fusion{'s' if len(groups) != 1 else ''}** available — select a group below."
+        ),
+        color=0x5865F2,
+    )
+    embed.set_footer(text=f"{interaction.user.display_name}  ·  /fusion")
+    await interaction.followup.send(embed=_fusion_select_embed(groups, None, interaction.user), view=view)
+
+
 if __name__ == "__main__":
     # LOAD .ENV FIRST - before getting the token!
     from dotenv import load_dotenv
