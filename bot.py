@@ -800,14 +800,13 @@ def build_challenge_embed(
 
 # ==================== ACTIVITY TRACKING ====================
 
-# guild_id → timestamp of last human message seen
-_guild_last_message: Dict[str, float] = {}
+# channel_id (int) → timestamp of last human message seen in that channel
+_channel_last_message: Dict[int, float] = {}
 # guild_id → timestamp of last wild card spawn
 _guild_last_spawn: Dict[str, float] = {}
 
-SPAWN_INTERVAL_ACTIVE   = 15 * 60   # seconds — chat active in last 10 min
-SPAWN_INTERVAL_IDLE     = 40 * 60   # seconds — no recent chat
-ACTIVITY_WINDOW         = 10 * 60   # seconds — "active" if message within this window
+SPAWN_INTERVAL  = 15 * 60   # seconds between spawns (per guild)
+ACTIVITY_WINDOW = 20 * 60   # seconds — channel is "alive" if a message arrived within this window
 
 
 # ==================== BOT EVENTS ====================
@@ -818,7 +817,7 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
     if message.guild:
-        _guild_last_message[str(message.guild.id)] = message.created_at.timestamp()
+        _channel_last_message[message.channel.id] = message.created_at.timestamp()
     await bot.process_commands(message)
 
 
@@ -939,9 +938,11 @@ class SpawnView(discord.ui.View):
 
 @tasks.loop(minutes=1)
 async def spawn_wild_card():
-    """Check each guild and spawn a wild card when the interval has elapsed.
+    """Spawn a wild card only in channels that have had recent activity.
 
-    Interval is 15 min if chat was active in the last 10 min, otherwise 20 min.
+    A channel is considered alive if a human message was sent there within
+    the last ACTIVITY_WINDOW seconds. Dead channels are skipped entirely.
+    Spawns happen at most once every SPAWN_INTERVAL seconds per guild.
     """
     now = __import__("time").time()
     for guild in bot.guilds:
@@ -950,18 +951,21 @@ async def spawn_wild_card():
         if not channel_ids:
             continue
 
-        last_msg = _guild_last_message.get(gid, 0)
-        is_active = (now - last_msg) < ACTIVITY_WINDOW
-        interval = SPAWN_INTERVAL_ACTIVE if is_active else SPAWN_INTERVAL_IDLE
+        # Only consider channels that have seen recent human activity
+        active_channels = [
+            guild.get_channel(int(cid))
+            for cid in channel_ids
+            if (now - _channel_last_message.get(int(cid), 0)) < ACTIVITY_WINDOW
+            and guild.get_channel(int(cid)) is not None
+        ]
+        if not active_channels:
+            continue  # All channels are dead — skip this guild entirely
 
         last_spawn = _guild_last_spawn.get(gid, 0)
-        if (now - last_spawn) < interval:
+        if (now - last_spawn) < SPAWN_INTERVAL:
             continue
 
-        channel_id = random.choice(channel_ids)
-        channel = guild.get_channel(int(channel_id))
-        if not channel:
-            continue
+        channel = random.choice(active_channels)
         try:
             card = card_module.generate_spawn_card()
             spawn_file = f1_images.get_spawn_file(card)
@@ -973,8 +977,7 @@ async def spawn_wild_card():
                 msg = await channel.send(content=None, embed=spawn_embed, view=view)
             view.message = msg
             _guild_last_spawn[gid] = now
-            mode = "active" if is_active else "idle"
-            print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name}) [{mode} — {interval//60}min interval]")
+            print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name}) [active — {SPAWN_INTERVAL//60}min interval]")
         except Exception as e:
             print(f"⚠️ Failed to spawn card in guild {guild.id}: {e}")
 
@@ -2607,10 +2610,10 @@ async def run_auto_race(
 
                 # Wrong-direction penalty
                 if p1_click and not p1_click[0]:
-                    race.gap += 0.4
+                    race.gap += 2.0
                     result_lines.append(f"❌ **{p1_user.display_name}** clicked the wrong direction — **+0.4s penalty!**")
                 if p2_click and not p2_click[0]:
-                    race.gap -= 0.4
+                    race.gap -= 2.0
                     result_lines.append(f"❌ **{p2_user.display_name}** clicked the wrong direction — **+0.4s penalty!**")
 
                 # No-reaction penalty (didn't click at all within 4s)
