@@ -501,6 +501,93 @@ class Database:
             return True
         return False
 
+    # ==================== CAREER ====================
+
+    def get_career(self, player_id: str) -> Optional[Dict]:
+        player = self.get_player(player_id)
+        return player.get("career") if player else None
+
+    def set_career(self, player_id: str, career: Dict):
+        player = self.get_player(player_id)
+        if player:
+            player["career"] = career
+            self._save_data()
+
+    def create_career(self, player_id: str, car_snap: Dict, driver_snap: Dict) -> Dict:
+        career = {
+            "status":               "active",
+            "car_snapshot":         car_snap,
+            "driver_snapshot":      driver_snap,
+            "matches_completed":    0,
+            "championship_points":  0,
+            "coins_earned":         0,
+            "match_results":        [],
+            "daily_used":           0,
+            "daily_reset_date":     None,
+            "last_match_at":        None,
+            "reward_claimed":       False,
+            "signed_at":            datetime.now().isoformat(),
+        }
+        player = self.get_player(player_id)
+        if player:
+            player["career"] = career
+            self._save_data()
+        return career
+
+    def record_career_match(self, player_id: str, result: Dict):
+        """Save match result and update career totals. result keys: match_num, position, points, coins, track."""
+        career = self.get_career(player_id)
+        if not career:
+            return
+        today = datetime.now().date().isoformat()
+        if career.get("daily_reset_date") != today:
+            career["daily_used"]       = 0
+            career["daily_reset_date"] = today
+        career["daily_used"]           = career.get("daily_used", 0) + 1
+        career["last_match_at"]        = datetime.now().isoformat()
+        career["matches_completed"]    = career.get("matches_completed", 0) + 1
+        career["championship_points"]  = career.get("championship_points", 0) + result.get("points", 0)
+        career["coins_earned"]         = career.get("coins_earned", 0) + result.get("coins", 0)
+        career["match_results"].append({
+            "match_num":  result["match_num"],
+            "position":   result["position"],
+            "points":     result["points"],
+            "coins":      result["coins"],
+            "track":      result.get("track", {}).get("name", ""),
+            "completed_at": datetime.now().isoformat(),
+        })
+        from career import TOTAL_MATCHES
+        if career["matches_completed"] >= TOTAL_MATCHES:
+            career["status"] = "completed"
+        self.add_coins(player_id, result.get("coins", 0))
+        player = self.get_player(player_id)
+        if player:
+            player["career"] = career
+            self._save_data()
+
+    def get_career_standings(self) -> List[Dict]:
+        """All players with active/completed careers, sorted by championship points."""
+        standings = []
+        for pid, player in self.data["players"].items():
+            career = player.get("career")
+            if career and career.get("status") in ("active", "completed"):
+                standings.append({
+                    "player_id":            pid,
+                    "username":             player.get("username", "Unknown"),
+                    "status":               career["status"],
+                    "championship_points":  career.get("championship_points", 0),
+                    "matches_completed":    career.get("matches_completed", 0),
+                })
+        standings.sort(key=lambda x: x["championship_points"], reverse=True)
+        return standings
+
+    def get_career_player_position(self, player_id: str) -> Optional[int]:
+        standings = self.get_career_standings()
+        for i, s in enumerate(standings, 1):
+            if s["player_id"] == player_id:
+                return i
+        return None
+
 
 # ==================== STATIC DATA ====================
 

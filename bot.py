@@ -13,6 +13,7 @@ import cards as card_module
 import f1_images
 import commentary as commentary_engine
 import card_manager as cm
+import career as career_mod
 
 # ==================== BOT SETUP ====================
 
@@ -4245,6 +4246,252 @@ async def fusion_slash(interaction: discord.Interaction):
     )
     embed.set_footer(text=f"{interaction.user.display_name}  ·  /fusion")
     await interaction.followup.send(embed=_fusion_select_embed(groups, None, interaction.user), view=view)
+
+
+# ==================== CAREER MODE ====================
+
+@bot.tree.command(name="career", description="Start or view your F1 Career Mode season")
+async def career_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    await interaction.response.defer()
+
+    career = db.get_career(player_id)
+
+    # Already has an active / completed career → show status
+    if career and career.get("status") in ("active", "completed"):
+        if career["status"] == "completed":
+            await interaction.followup.send(
+                "🏁 You have completed all your career matches! Stay tuned for next season.",
+                embed=career_mod.career_status_embed(career, interaction.user.display_name),
+            )
+        else:
+            await interaction.followup.send(
+                embed=career_mod.career_status_embed(career, interaction.user.display_name)
+            )
+        return
+
+    # Fresh sign-up flow — show landing embed
+    signup_view = career_mod.CareerSignupView(player_id)
+    await interaction.followup.send(embed=career_mod.career_landing_embed(), view=signup_view)
+    await signup_view.wait()
+    if not signup_view.signed:
+        return
+
+    # --- Car selection ---
+    cards = db.get_player_cards(player_id)
+    cars  = cards.get("cars", [])
+    if not cars:
+        await interaction.followup.send("❌ You need at least one car in your collection to start career mode!", ephemeral=True)
+        return
+    car_view = career_mod.CareerCarSelectView(player_id, cars)
+    await interaction.followup.send("**Step 1 of 2 — Choose your career car:**", view=car_view, ephemeral=True)
+    await car_view.wait()
+    chosen_car = car_view.selected
+    if not chosen_car:
+        await interaction.followup.send("❌ No car selected. Use `/career` to try again.", ephemeral=True)
+        return
+
+    # --- Driver selection ---
+    drivers = cards.get("drivers", [])
+    if not drivers:
+        await interaction.followup.send("❌ You need at least one driver to start career mode!", ephemeral=True)
+        return
+    drv_view = career_mod.CareerDriverSelectView(player_id, drivers)
+    await interaction.followup.send("**Step 2 of 2 — Choose your career driver:**", view=drv_view, ephemeral=True)
+    await drv_view.wait()
+    chosen_drv = drv_view.selected
+    if not chosen_drv:
+        await interaction.followup.send("❌ No driver selected. Use `/career` to try again.", ephemeral=True)
+        return
+
+    # --- Confirmation ---
+    rarity_e_car = card_module.RARITY_EMOJIS.get(chosen_car.get("rarity", "common"), "")
+    rarity_e_drv = card_module.RARITY_EMOJIS.get(chosen_drv.get("rarity", "common"), "")
+    confirm_embed = discord.Embed(
+        title="📝  Confirm Your Career Contract",
+        description=(
+            f"You are about to lock in your career setup for the **entire season**.\n"
+            f"You cannot change these mid-season.\n\u200b\n"
+            f"🏎️  **Car:** {rarity_e_car} {chosen_car['name']}  ·  {chosen_car.get('top_speed','?')} km/h\n"
+            f"👤  **Driver:** {rarity_e_drv} {chosen_drv['name']}  ·  Skill {chosen_drv.get('skill','?')}/10\n\n"
+            f"⚙️  Your **garage upgrades** will still apply each race."
+        ),
+        color=0x2d3436,
+    )
+    confirm_view = career_mod.CareerConfirmView(player_id)
+    await interaction.followup.send(embed=confirm_embed, view=confirm_view, ephemeral=True)
+    await confirm_view.wait()
+    if not confirm_view.confirmed:
+        await interaction.followup.send("Selection changed. Use `/career` to start again.", ephemeral=True)
+        return
+
+    # --- Create career record ---
+    car_snap = {k: chosen_car.get(k) for k in ("id", "name", "team", "top_speed", "handling", "rarity")}
+    drv_snap = {k: chosen_drv.get(k) for k in ("id", "name", "code", "skill", "team", "rarity")}
+    db.create_career(player_id, car_snap, drv_snap)
+
+    # Public announcement
+    await interaction.channel.send(
+        f"🏎️  {interaction.user.mention} has **signed their F1 Career contract!**\n"
+        f"The career matches will become very hard. We request you to play the matches "
+        f"at the recommended speed or above it to have a good chance of winning the match! 🏎️"
+    )
+    await interaction.followup.send(
+        "✅ **Contract signed!** Your career has begun. Use `/matches` to see your schedule and `/career_match` to race!",
+        ephemeral=True,
+    )
+
+
+@bot.tree.command(name="matches", description="View your F1 Career season schedule")
+async def matches_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    await interaction.response.defer()
+    career = db.get_career(player_id)
+    if not career:
+        await interaction.followup.send("❌ You haven't started career mode yet. Use `/career` to sign up!")
+        return
+    await interaction.followup.send(embed=career_mod.matches_embed(career))
+
+
+@bot.tree.command(name="career_match", description="Play your next F1 Career race")
+async def career_match_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    await interaction.response.defer()
+
+    career = db.get_career(player_id)
+    if not career:
+        await interaction.followup.send("❌ You haven't started career mode yet. Use `/career` to sign up!")
+        return
+    if career.get("status") == "completed":
+        await interaction.followup.send("🏁 You have completed all your career matches! Stay tuned for next season.")
+        return
+
+    ok, reason = career_mod.can_play(career)
+    if not ok:
+        if reason == "season_done":
+            await interaction.followup.send("🏁 You have completed all your career matches! Stay tuned for next season.")
+        elif reason.startswith("cooldown:"):
+            secs = int(reason.split(":")[1])
+            ts   = career_mod.next_unlock_timestamp(career)
+            msg  = f"⏰ Daily limit reached. Next match unlocks <t:{ts}:R> ({career_mod.fmt_secs(secs)})." if ts else f"⏰ Cooldown: {career_mod.fmt_secs(secs)} remaining."
+            await interaction.followup.send(msg)
+        return
+
+    match_num = career.get("matches_completed", 0) + 1
+    car_snap  = career["car_snapshot"]
+    drv_snap  = career["driver_snapshot"]
+    upgrades  = db.get_upgrades(player_id)
+    npcs      = career_mod.get_race_npcs(match_num)
+
+    # Show preview embed with Start button
+    preview = career_mod.match_preview_embed(match_num, npcs, car_snap, drv_snap, upgrades)
+    start_view = career_mod.CareerMatchStartView(player_id)
+    msg = await interaction.followup.send(embed=preview, view=start_view)
+    await start_view.wait()
+    if not start_view.started:
+        return
+
+    # Fetch the actual message object for in-place editing during QTE
+    try:
+        msg_obj = await interaction.channel.fetch_message(msg.id)
+    except Exception:
+        msg_obj = msg
+
+    # Run race
+    result = await career_mod.run_career_race(
+        msg_obj, player_id, match_num, car_snap, drv_snap, upgrades
+    )
+
+    # Save to DB
+    db.record_career_match(player_id, result)
+
+    # Show result embed
+    await msg_obj.edit(
+        embed=career_mod.race_result_embed(
+            result["standings"], result["position"],
+            result["coins"], result["points"],
+            result["track"], result["qte_hits"], result["pit_hits"],
+        ),
+        view=None,
+    )
+
+    # Check if season just completed
+    updated_career = db.get_career(player_id)
+    if updated_career and updated_career.get("status") == "completed":
+        await interaction.channel.send(
+            f"🏆 {interaction.user.mention} has **completed their career season!** "
+            f"Use `/career_standings` to see the final standings and `/career_rewards` to claim your prize!"
+        )
+
+
+@bot.tree.command(name="career_standings", description="View the F1 Career championship standings")
+async def career_standings_slash(interaction: discord.Interaction):
+    await interaction.response.defer()
+    all_standings = db.get_career_standings()
+    await interaction.followup.send(embed=career_mod.career_standings_embed(all_standings))
+
+
+@bot.tree.command(name="career_rewards", description="View and claim your F1 Career season rewards")
+async def career_rewards_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    await interaction.response.defer()
+
+    career = db.get_career(player_id)
+    if not career:
+        await interaction.followup.send("❌ You haven't started career mode yet. Use `/career` to sign up!")
+        return
+
+    player_pos  = db.get_career_player_position(player_id)
+    completed   = career.get("matches_completed", 0) >= career_mod.TOTAL_MATCHES
+    claimable   = completed and not career.get("reward_claimed", False)
+    rewards_view = career_mod.CareerRewardsView(player_id, claimable)
+
+    await interaction.followup.send(
+        embed=career_mod.career_rewards_embed(player_pos or 99, career),
+        view=rewards_view,
+    )
+    if not claimable:
+        return
+
+    await rewards_view.wait()
+    if not rewards_view.claimed:
+        return
+
+    # ── Grant rewards ──
+    career = db.get_career(player_id)
+    career["reward_claimed"] = True
+    db.set_career(player_id, career)
+
+    lines = ["✅  **Season rewards granted!**\n"]
+
+    # Coins
+    coin_rewards = {1: 8000, 2: 8000, 3: 8000, 4: 6000, 5: 5000,
+                    6: 4000, 7: 3000, 8: 2000}
+    coins = coin_rewards.get(player_pos, 1000)
+    db.add_coins(player_id, coins)
+    lines.append(f"💰  **+{coins:,} Coins** awarded")
+
+    # Special career card (top 3)
+    if player_pos in career_mod.CAREER_SPECIAL_CARDS:
+        spec = career_mod.CAREER_SPECIAL_CARDS[player_pos].copy()
+        spec["id"] = f"{spec['id']}_{player_id}"
+        spec["obtained_at"] = datetime.now().isoformat()
+        db.add_card_to_player(player_id, spec, "driver")
+        rarity_e = card_module.RARITY_EMOJIS.get(spec["rarity"], "")
+        lines.append(f"{rarity_e}  **Special Card:** {spec['name']} added to your collection!")
+
+    # Pack rewards (simulate by giving bonus coins for simplicity — packs can be added via existing pack system)
+    pack_bonus = {1: 5000, 2: 4000, 3: 3000, 4: 2000, 5: 1000}
+    if player_pos in pack_bonus:
+        extra = pack_bonus[player_pos]
+        db.add_coins(player_id, extra)
+        lines.append(f"📦  **Pack value:** +{extra:,} coins (use to open packs)")
+
+    await interaction.followup.send("\n".join(lines))
 
 
 if __name__ == "__main__":
