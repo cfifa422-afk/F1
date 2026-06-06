@@ -4,7 +4,7 @@
       "id": "1141690369445216326",
       "username": "krazymatrix_",
       "created_at": "2026-05-27T07:43:18.856357",
-      "coins": 14385,
+      "coins": 14885,
       "equipped": {
         "driver_id": "9602B25",
         "car_id": "1042AF4",
@@ -298,7 +298,44 @@
         "acceleration": 0,
         "suspension": 0
       },
-      "last_promo_dm": "2026-06-01T06:13:40.327707"
+      "last_promo_dm": "2026-06-06T16:40:57.525765",
+      "career": {
+        "status": "active",
+        "car_snapshot": {
+          "id": "08D2B85",
+          "name": "Mercedes AMG W14",
+          "team": "Mercedes",
+          "top_speed": 412,
+          "handling": 9.2,
+          "rarity": "legendary"
+        },
+        "driver_snapshot": {
+          "id": "9602B25",
+          "name": "Max Verstappen",
+          "code": "VER",
+          "skill": 9.2,
+          "team": "Red Bull",
+          "rarity": "legendary"
+        },
+        "matches_completed": 1,
+        "championship_points": 25,
+        "coins_earned": 500,
+        "match_results": [
+          {
+            "match_num": 1,
+            "position": 1,
+            "points": 25,
+            "coins": 500,
+            "track": "Bahrain GP",
+            "completed_at": "2026-06-06T16:46:34.855928"
+          }
+        ],
+        "daily_used": 1,
+        "daily_reset_date": "2026-06-06",
+        "last_match_at": "2026-06-06T16:46:34.855891",
+        "reward_claimed": false,
+        "signed_at": "2026-06-06T16:45:00.050708"
+      }
     },
     "1172787997217927191": {
       "id": "1172787997217927191",
@@ -836,7 +873,7 @@
         "acceleration": 0,
         "suspension": 0
       },
-      "last_promo_dm": "2026-06-01T06:13:43.298197"
+      "last_promo_dm": "2026-06-06T16:41:01.134416"
     },
     "1114431461534216194": {
       "id": "1114431461534216194",
@@ -1422,7 +1459,7 @@
         "acceleration": 0,
         "suspension": 0
       },
-      "last_promo_dm": "2026-06-01T06:13:45.518091"
+      "last_promo_dm": "2026-06-06T16:41:04.397778"
     },
     "851188509501947924": {
       "id": "851188509501947924",
@@ -1976,7 +2013,7 @@
         "acceleration": 0,
         "suspension": 0
       },
-      "last_promo_dm": "2026-06-01T06:13:48.598032"
+      "last_promo_dm": "2026-06-06T16:41:08.055926"
     },
     "820301258702979162": {
       "id": "820301258702979162",
@@ -9036,7 +9073,7 @@
       },
       "last_daily_pack": null,
       "last_weekly_pack": null,
-      "last_promo_dm": null,
+      "last_promo_dm": "2026-06-06T16:44:13.356175",
       "stats": {
         "wins": 0,
         "losses": 0,

@@ -1063,11 +1063,6 @@ async def daily_promo_dm():
         try:
             user = await bot.fetch_user(int(pid))
             await user.send(
-                f"👋 Hey {user.mention}!\n\n"
-                f"🏎️ **Want exclusive rewards?**\n"
-                f"If you add this bot to your servers and contact **huh_34**, "
-                f"you'll receive **special rewards** for helping grow the F1 Racing community!\n\n"
-                f"🏆 Don't miss out — contact **huh_34** today!"
             )
             db.set_promo_dm_sent(pid)
             sent += 1
@@ -4387,22 +4382,29 @@ async def career_match_slash(interaction: discord.Interaction):
     npcs      = career_mod.get_race_npcs(match_num)
 
     # Show preview embed with Start button
-    preview = career_mod.match_preview_embed(match_num, npcs, car_snap, drv_snap, upgrades)
+    preview    = career_mod.match_preview_embed(match_num, npcs, car_snap, drv_snap, upgrades)
     start_view = career_mod.CareerMatchStartView(player_id)
-    msg = await interaction.followup.send(embed=preview, view=start_view)
+    msg        = await interaction.followup.send(embed=preview, view=start_view)
     await start_view.wait()
     if not start_view.started:
         return
 
-    # Fetch the actual message object for in-place editing during QTE
+    # Fetch the actual message object for in-place editing during the race
     try:
         msg_obj = await interaction.channel.fetch_message(msg.id)
     except Exception:
         msg_obj = msg
 
-    # Run race
+    # Run full race (3 laps / 12 turns — mirrors normal race)
     result = await career_mod.run_career_race(
-        msg_obj, player_id, match_num, car_snap, drv_snap, upgrades
+        interaction.channel,
+        msg_obj,
+        interaction.user,
+        player_id,
+        match_num,
+        car_snap,
+        drv_snap,
+        upgrades,
     )
 
     # Save to DB
@@ -4411,9 +4413,15 @@ async def career_match_slash(interaction: discord.Interaction):
     # Show result embed
     await msg_obj.edit(
         embed=career_mod.race_result_embed(
-            result["standings"], result["position"],
-            result["coins"], result["points"],
-            result["track"], result["qte_hits"], result["pit_hits"],
+            result["standings"],
+            result["position"],
+            result["coins"],
+            result["points"],
+            result["track"],
+            result["qte_hits"],
+            result["qte_total"],
+            result["pit_hits"],
+            result["state"],
         ),
         view=None,
     )
