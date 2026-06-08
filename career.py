@@ -1063,20 +1063,16 @@ class CareerScenarioView(discord.ui.View):
                 return
             self.choice       = value
             self.choice_label = label
-        await interaction.response.send_message(f"✅  **{label}** locked in!", ephemeral=True)
-        if self.message:
-            try:
-                await self.message.edit(
-                    embed=build_career_scenario_embed(
-                        self.scenario, self.state, self.live_timing,
-                        self.track, self.match_num, self.gif_url,
-                        locked=True, choice_label=label,
-                    ),
-                    view=self,
-                )
-            except Exception:
-                pass
         self.chosen.set()
+        # Remove buttons immediately when player clicks
+        await interaction.response.edit_message(
+            embed=build_career_scenario_embed(
+                self.scenario, self.state, self.live_timing,
+                self.track, self.match_num, self.gif_url,
+                locked=True, choice_label=label,
+            ),
+            view=None,
+        )
 
 
 class CareerReactionView(discord.ui.View):
@@ -1100,16 +1096,20 @@ class CareerReactionView(discord.ui.View):
         elapsed     = time.time() - self._start
         correct     = (clicked == self.direction)
         self.result = (correct, elapsed)
-        if correct:
-            await interaction.response.send_message(
-                f"✅ **{interaction.user.display_name}** — nailed it! `{elapsed:.2f}s`", ephemeral=True
-            )
-        else:
-            await interaction.response.send_message(
-                f"❌ **{interaction.user.display_name}** — wrong direction! Penalty incoming.", ephemeral=True
-            )
         self.done.set()
         self.stop()
+        if correct:
+            await interaction.response.edit_message(
+                content=f"✅ **CORRECT!** You hit it in `{elapsed:.2f}s`! 🚀",
+                embed=None,
+                view=None,
+            )
+        else:
+            await interaction.response.edit_message(
+                content=f"❌ **WRONG DIRECTION!** Penalty incoming… 💀",
+                embed=None,
+                view=None,
+            )
 
     @discord.ui.button(label="◀  LEFT",  style=discord.ButtonStyle.primary, row=0)
     async def btn_left(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1242,17 +1242,6 @@ async def run_career_race(
                 if state.weather == "rain" and turn_num in (6, 9):
                     scenario = RAIN_SCENARIO_OVERRIDE.copy()
 
-                # Ping player
-                try:
-                    is_pit = any(o.get("value") == "pit_stop" for o in scenario.get("options", []))
-                    pit_note = "  🔧 Pit stop available!" if is_pit else ""
-                    await channel.send(
-                        f"⚠️ {player.mention} — **{scenario['title']}** — make your call now!{pit_note}",
-                        delete_after=SCENARIO_WAIT,
-                    )
-                except Exception:
-                    pass
-
                 sv = CareerScenarioView(
                     player_id, scenario, state, timing, track, match_num, msg, gif_url
                 )
@@ -1313,25 +1302,20 @@ async def run_career_race(
             except Exception:
                 pass
 
-            # ══ REACTION CHALLENGE ═════════════════════════
+            # ══ REACTION CHALLENGE — embed sent to player DM ══
             if turn_num in REACTION_TURNS and channel:
                 await asyncio.sleep(1.2)
                 direction = random.choice(REACTION_DIRECTIONS)
                 dir_label = REACTION_LABELS[direction]
 
-                rv        = CareerReactionView(direction, player)
-                react_msg = None
+                rv = CareerReactionView(direction, player)
                 try:
-                    await channel.send(
-                        f"⚡ {player.mention} — **YOUR REACTION!** Hit  **{dir_label}**  NOW!",
-                        delete_after=6,
-                    )
-                    react_msg = await channel.send(
+                    await player.send(
                         embed=build_career_reaction_embed(player, dir_label),
                         view=rv,
                     )
                 except Exception:
-                    pass
+                    rv.done.set()
 
                 try:
                     await asyncio.wait_for(rv.done.wait(), timeout=4.0)
@@ -1340,36 +1324,16 @@ async def run_career_race(
 
                 # Evaluate reaction
                 qte_total += 1
-                result_lines = []
                 if rv.result is not None:
                     correct, elapsed = rv.result
                     if correct:
-                        qte_hits       += 1
+                        qte_hits        += 1
                         state.score_adj += 2.0
-                        result_lines.append(
-                            f"🥇 **{player.display_name}** nailed it! `{elapsed:.2f}s` — **+speed advantage!** 🚀"
-                        )
                     else:
                         state.score_adj -= 3.0
-                        result_lines.append(
-                            f"❌ **{player.display_name}** wrong direction! — **penalty!**"
-                        )
                 else:
                     state.score_adj -= 1.0
-                    result_lines.append(
-                        f"⏱️ **{player.display_name}** didn't react — **penalty!**"
-                    )
 
-                result_embed = discord.Embed(
-                    title="✅  Reaction Result",
-                    description="\n".join(result_lines),
-                    color=0x2ECC71,
-                )
-                if react_msg:
-                    try:
-                        await react_msg.edit(embed=result_embed, view=None)
-                    except Exception:
-                        pass
                 await asyncio.sleep(2.0)
 
             elif turn_num < CAREER_TURNS:

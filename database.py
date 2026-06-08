@@ -80,6 +80,9 @@ class Database:
         player.setdefault("last_daily_pack", None)
         player.setdefault("last_weekly_pack", None)
         player.setdefault("last_promo_dm", None)
+        player.setdefault("last_vote_reminder", None)
+        player.setdefault("last_vote_claimed", None)
+        player.setdefault("vote_bonus_matches", 0)
         player.setdefault("achievements", [])
         player.setdefault("upgrades", {s: 0 for s in UPGRADE_STATS})
         if "cards" not in player:
@@ -108,6 +111,9 @@ class Database:
             "last_daily_pack": None,
             "last_weekly_pack": None,
             "last_promo_dm": None,
+            "last_vote_reminder": None,
+            "last_vote_claimed": None,
+            "vote_bonus_matches": 0,
             "stats": {
                 "wins": 0,
                 "losses": 0,
@@ -444,6 +450,61 @@ class Database:
         if player:
             player["last_promo_dm"] = datetime.now().isoformat()
             self._save_data()
+
+    # ==================== VOTE SYSTEM ====================
+
+    def should_send_vote_reminder(self, player_id: str) -> bool:
+        player = self.data["players"].get(player_id)
+        if not player:
+            return False
+        last = player.get("last_vote_reminder")
+        if not last:
+            return True
+        last_dt = datetime.fromisoformat(last)
+        return (datetime.now() - last_dt).days >= 3
+
+    def set_vote_reminder_sent(self, player_id: str):
+        player = self.data["players"].get(player_id)
+        if player:
+            player["last_vote_reminder"] = datetime.now().isoformat()
+            self._save_data()
+
+    def can_claim_vote(self, player_id: str) -> bool:
+        player = self.data["players"].get(player_id)
+        if not player:
+            return False
+        last = player.get("last_vote_claimed")
+        if not last:
+            return True
+        last_dt = datetime.fromisoformat(last)
+        return (datetime.now() - last_dt).total_seconds() >= 12 * 3600
+
+    def set_vote_claimed(self, player_id: str):
+        player = self.data["players"].get(player_id)
+        if player:
+            player["last_vote_claimed"] = datetime.now().isoformat()
+            self._save_data()
+
+    def get_vote_bonus_matches(self, player_id: str) -> int:
+        player = self.data["players"].get(player_id)
+        return player.get("vote_bonus_matches", 0) if player else 0
+
+    def add_vote_bonus_match(self, player_id: str):
+        player = self.data["players"].get(player_id)
+        if player:
+            player["vote_bonus_matches"] = player.get("vote_bonus_matches", 0) + 1
+            self._save_data()
+
+    def use_vote_bonus_match(self, player_id: str) -> bool:
+        player = self.data["players"].get(player_id)
+        if not player:
+            return False
+        cur = player.get("vote_bonus_matches", 0)
+        if cur <= 0:
+            return False
+        player["vote_bonus_matches"] = cur - 1
+        self._save_data()
+        return True
 
     def get_leaderboard(self, limit: int = 10) -> List[Dict]:
         players = list(self.data["players"].values())
