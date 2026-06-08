@@ -359,6 +359,7 @@ def career_status_embed(career: Dict, username: str) -> discord.Embed:
 
 def matches_embed(career: Dict) -> discord.Embed:
     done    = career.get("matches_completed", 0)
+    pts_total = career.get("championship_points", 0)
     results = {r["match_num"]: r for r in career.get("match_results", [])}
     from datetime import datetime
     today   = datetime.now().date().isoformat()
@@ -373,25 +374,616 @@ def matches_embed(career: Dict) -> discord.Embed:
             pos = r.get("position", "?")
             pe  = POS_EMOJIS.get(pos, f"P{pos}")
             pts = r.get("points", 0)
-            lines.append(f"✅  **Match {n}** — {t['flag']} {t['name']} — {pe} · {pts} pts")
+            lines.append(f"✅  **R{n}** {t['flag']} {t['name']}  —  {pe} · **{pts} pts**")
         elif n == done + 1:
             if used < DAILY_LIMIT:
-                lines.append(f"🟢  **Match {n}** — {t['flag']} {t['name']} — {meta['emoji']} {meta['label']} ← **NEXT**")
+                lines.append(f"🟢  **R{n}** {t['flag']} {t['name']}  —  {meta['emoji']} {meta['label']}  ◄ **NEXT**")
             else:
                 ts        = next_unlock_timestamp(career)
                 unlock_str = f"<t:{ts}:R>" if ts else "soon"
-                lines.append(f"⏰  **Match {n}** — {t['flag']} {t['name']} — unlocks {unlock_str}")
+                lines.append(f"⏰  **R{n}** {t['flag']} {t['name']}  —  unlocks {unlock_str}")
         else:
-            lines.append(f"🔒  **Match {n}** — {t['flag']} {t['name']} — {meta['emoji']} {meta['label']}")
+            lines.append(f"🔒  **R{n}** {t['flag']} {t['name']}  —  {meta['emoji']} {meta['label']}")
+
+    chunk_size = 8
+    chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
+    labels = ["Races 1–8", "Races 9–16", "Races 17–24"]
+
+    status = career.get("status", "active")
+    color  = 0x00b894 if status == "active" else 0xf9ca24
 
     e = discord.Embed(
-        title=f"📅  Season Schedule — {done}/{TOTAL_MATCHES} Completed",
-        color=0x0984e3,
+        title=f"📅  F1 Career — Season Schedule",
+        color=color,
     )
-    for i, line in enumerate(lines[:15]):
-        if i == 0:
-            e.add_field(name="Races", value="\n".join(lines[:8]), inline=False)
+    e.add_field(
+        name="📊  Season Progress",
+        value=(
+            f"**Races completed:** {done} / {TOTAL_MATCHES}\n"
+            f"**Championship Points:** {pts_total} pts\n"
+            f"**Today's matches:** {used} / {DAILY_LIMIT} used"
+        ),
+        inline=False,
+    )
+    for i, chunk in enumerate(chunks):
+        label = labels[i] if i < len(labels) else f"Races {i*8+1}–{i*8+8}"
+        e.add_field(name=label, value="\n".join(chunk), inline=False)
+    e.set_footer(text="🟢 Ready  ·  ✅ Done  ·  🔒 Locked  ·  ⏰ On cooldown  |  Use /career_match to race")
     return e
+
+# ═══════════════════════════════════════════════════════════
+#  CAREER RACE — SCENARIOS & REACTION SYSTEM
+# ═══════════════════════════════════════════════════════════
+
+CAREER_RACE_SCENARIOS: Dict[int, Dict] = {
+    3: {
+        "id": "pit_window",
+        "title": "🛑  Pit Window Open!",
+        "description": "**Lap 1 complete.** Fresh rubber could be decisive — but staying out preserves track position.",
+        "question": "Do you pit for fresh tyres, or push on?",
+        "options": [
+            {"label": "⛽ Pit Now",   "value": "pit_stop",   "style": discord.ButtonStyle.danger},
+            {"label": "🏎️ Stay Out", "value": "same_speed", "style": discord.ButtonStyle.success},
+        ],
+    },
+    6: {
+        "id": "drs_attack",
+        "title": "💨  DRS Zone — Attack or Manage!",
+        "description": "**Mid-race.** The DRS zone opens up. Go flat out and gain ground, or protect your tyres?",
+        "question": "Go flat out through the DRS zone, or conserve tyres for the final laps?",
+        "options": [
+            {"label": "🔥 Maximum Attack",   "value": "accelerate", "style": discord.ButtonStyle.danger},
+            {"label": "🛡️ Conserve & Cover", "value": "slow_down",  "style": discord.ButtonStyle.secondary},
+        ],
+    },
+    9: {
+        "id": "late_strategy",
+        "title": "🚗  Late Race Strategy Call!",
+        "description": "**Final third.** Tyre wear is critical and fuel loads are dropping fast. Every call is season-defining.",
+        "question": "Push hard, manage tyres to the flag, or gamble on an emergency stop?",
+        "options": [
+            {"label": "🔥 Push Hard",      "value": "accelerate", "style": discord.ButtonStyle.success},
+            {"label": "⏱️ Manage Tyres",  "value": "slow_down",  "style": discord.ButtonStyle.secondary},
+            {"label": "⛽ Emergency Pit",  "value": "pit_stop",   "style": discord.ButtonStyle.danger},
+        ],
+    },
+    11: {
+        "id": "final_lap",
+        "title": "🏁  FINAL LAP — Last Call!",
+        "description": "**The white flag is out.** Everything comes down to the next few corners. Make it count.",
+        "question": "Absolute maximum attack, or protect what you have?",
+        "options": [
+            {"label": "🔥 FLAT OUT!",        "value": "accelerate", "style": discord.ButtonStyle.danger},
+            {"label": "🛡️ Protect the Gap", "value": "same_speed", "style": discord.ButtonStyle.success},
+        ],
+    },
+}
+
+REACTION_DIRECTIONS = ["left", "right", "up", "down"]
+REACTION_LABELS = {
+    "left":  "◀  LEFT",
+    "right": "RIGHT  ▶",
+    "up":    "▲  UP",
+    "down":  "▼  DOWN",
+}
+
+
+class CareerReactionView(discord.ui.View):
+    """Channel-only reaction challenge — disappears immediately on click or timeout."""
+
+    def __init__(self, direction: str, player: discord.Member):
+        super().__init__(timeout=5.0)
+        self.direction = direction
+        self.player    = player
+        self.result: Optional[tuple] = None
+        self.done      = asyncio.Event()
+        self._start    = time.time()
+
+    async def _handle(self, interaction: discord.Interaction, clicked: str):
+        if interaction.user.id != self.player.id:
+            await interaction.response.send_message("❌ This isn't your race!", ephemeral=True)
+            return
+        if self.result is not None:
+            await interaction.response.defer()
+            return
+        elapsed = time.time() - self._start
+        correct = clicked == self.direction
+        self.result = (correct, elapsed)
+        self.done.set()
+        self.stop()
+        if correct:
+            await interaction.response.edit_message(
+                content=f"✅  **NAILED IT!**  `{elapsed:.2f}s` — speed boost incoming! 🚀",
+                embed=None,
+                view=None,
+            )
+        else:
+            await interaction.response.edit_message(
+                content=f"❌  **WRONG DIRECTION!**  Penalty applied… 💀",
+                embed=None,
+                view=None,
+            )
+
+    async def on_timeout(self):
+        self.done.set()
+
+    @discord.ui.button(label="◀  LEFT",  style=discord.ButtonStyle.primary, row=0)
+    async def btn_left(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "left")
+
+    @discord.ui.button(label="RIGHT  ▶", style=discord.ButtonStyle.primary, row=0)
+    async def btn_right(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "right")
+
+    @discord.ui.button(label="▲  UP",    style=discord.ButtonStyle.primary, row=0)
+    async def btn_up(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "up")
+
+    @discord.ui.button(label="▼  DOWN",  style=discord.ButtonStyle.primary, row=0)
+    async def btn_down(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._handle(interaction, "down")
+
+
+class CareerScenarioView(discord.ui.View):
+    """Single-player tactical decision shown in channel during a career race."""
+
+    def __init__(self, player: discord.Member, scenario: Dict):
+        super().__init__(timeout=30)
+        self.player   = player
+        self.choice: Optional[str] = None
+        self.label:  Optional[str] = None
+        self.chosen   = asyncio.Event()
+
+        for opt in scenario["options"]:
+            btn = discord.ui.Button(label=opt["label"], style=opt["style"], row=0)
+            value = opt["value"]
+            label = opt["label"]
+
+            async def _cb(interaction: discord.Interaction, _v=value, _l=label):
+                if interaction.user.id != self.player.id:
+                    await interaction.response.send_message("This is not your race!", ephemeral=True)
+                    return
+                if self.choice:
+                    await interaction.response.defer()
+                    return
+                self.choice = _v
+                self.label  = _l
+                self.chosen.set()
+                self.stop()
+                await interaction.response.edit_message(
+                    content=f"✅  **{_l}** locked in! Decision made.",
+                    embed=None,
+                    view=None,
+                )
+
+            btn.callback = _cb
+            self.add_item(btn)
+
+    async def on_timeout(self):
+        self.chosen.set()
+
+
+# ═══════════════════════════════════════════════════════════
+#  CAREER RACE — EMBEDS
+# ═══════════════════════════════════════════════════════════
+
+def match_preview_embed(
+    match_num: int,
+    npcs: List[Dict],
+    car_snap: Dict,
+    drv_snap: Dict,
+    upgrades: Dict,
+) -> discord.Embed:
+    track = get_track(match_num)
+    diff  = track["difficulty"]
+    meta  = DIFF_META[diff]
+
+    speed_boost = sum(upgrades.get(s, 0) for s in ["engine"]) * 3
+    boosted_speed = car_snap.get("top_speed", 350) + speed_boost
+
+    rival_lines = []
+    for npc in npcs[:5]:
+        rival_lines.append(f"• **{npc['name']}** ({npc['team']})  —  {npc['speed']} km/h · Skill {npc['skill']}/10")
+    if len(npcs) > 5:
+        rival_lines.append(f"*…and {len(npcs) - 5} more rivals*")
+
+    e = discord.Embed(
+        title=f"🏎️  Match {match_num} — {track['flag']} {track['name']}",
+        description=(
+            f"**Circuit:** {track['circuit']}\n"
+            f"**Type:** {track['type']}\n"
+            f"**Difficulty:** {meta['emoji']} {meta['label']}\n\n"
+            f"Recommended speed: **{meta['rec_speed']} km/h** · Skill: **{meta['rec_skill']}/10**"
+        ),
+        color=meta["color"],
+    )
+    e.add_field(
+        name="🏎️  Your Setup",
+        value=(
+            f"**Car:** {car_snap.get('name', '?')}  —  **{boosted_speed} km/h** (upgraded)\n"
+            f"**Driver:** {drv_snap.get('name', '?')}  —  Skill {drv_snap.get('skill', '?')}/10"
+        ),
+        inline=False,
+    )
+    e.add_field(
+        name=f"👥  Field Preview ({len(npcs)} rivals)",
+        value="\n".join(rival_lines) or "*No rivals listed*",
+        inline=False,
+    )
+    e.add_field(
+        name="🎮  Race Format",
+        value=(
+            "**3 Laps · 12 Turns**\n"
+            "⚡ Reaction challenges appear in **this channel** — click fast!\n"
+            "🛑 Tactical decisions appear in **this channel** — choose wisely!"
+        ),
+        inline=False,
+    )
+    e.set_footer(text=f"Match {match_num} / {TOTAL_MATCHES}  ·  Press Start Race when ready")
+    return e
+
+
+def race_result_embed(
+    standings: List[Dict],
+    position: int,
+    coins: int,
+    points: int,
+    track: Dict,
+    qte_hits: int,
+    qte_total: int,
+    pit_hits: int,
+    state: Dict,
+) -> discord.Embed:
+    diff  = track["difficulty"]
+    meta  = DIFF_META[diff]
+    pos_e = POS_EMOJIS.get(position, f"P{position}")
+
+    color = 0x00b894 if position <= 3 else (0xfdcb6e if position <= 8 else 0xe17055)
+
+    e = discord.Embed(
+        title=f"🏁  Race Finished — {track['flag']} {track['name']}",
+        color=color,
+    )
+    e.add_field(
+        name="🏆  Your Result",
+        value=(
+            f"**Position:** {pos_e}  (P{position})\n"
+            f"**Championship Points:** +{points} pts\n"
+            f"**Coins Earned:** +{coins:,} 🪙"
+        ),
+        inline=False,
+    )
+
+    if standings:
+        top_lines = []
+        for s in standings[:8]:
+            p    = s["position"]
+            icon = POS_EMOJIS.get(p, f"P{p}")
+            name = s["name"]
+            gap  = s.get("gap_str", "")
+            mark = "  ◄ **YOU**" if s.get("is_player") else ""
+            top_lines.append(f"{icon}  **{name}**{f'  `{gap}`' if gap else ''}{mark}")
+        e.add_field(name="📋  Race Standings", value="\n".join(top_lines), inline=False)
+
+    react_str = f"{qte_hits}/{qte_total}" if qte_total else "—"
+    e.add_field(
+        name="📊  Performance",
+        value=(
+            f"⚡ Reactions: **{react_str}** hit\n"
+            f"⛽ Pit decisions: **{pit_hits}**\n"
+            f"🌤️ Conditions: {state.get('weather', 'Clear').title()}"
+        ),
+        inline=True,
+    )
+    e.add_field(
+        name="🗺️  Track",
+        value=(
+            f"{track['flag']} {track['name']}\n"
+            f"*{track['circuit']}*\n"
+            f"{meta['emoji']} {meta['label']}"
+        ),
+        inline=True,
+    )
+    e.set_footer(text="Use /matches to see your season schedule · /career_match to race again")
+    return e
+
+
+# ═══════════════════════════════════════════════════════════
+#  CAREER RACE — MAIN ENGINE
+# ═══════════════════════════════════════════════════════════
+
+async def run_career_race(
+    channel,
+    msg_obj,
+    user: discord.Member,
+    player_id: str,
+    match_num: int,
+    car_snap: Dict,
+    drv_snap: Dict,
+    upgrades: Dict,
+) -> Dict:
+    track = get_track(match_num)
+    diff  = track["difficulty"]
+    npcs  = get_race_npcs(match_num)
+
+    speed_mult   = 1.0 + upgrades.get("engine", 0) * 0.03
+    accel_mult   = 1.0 + upgrades.get("acceleration", 0) * 0.025
+    brake_mult   = 1.0 + upgrades.get("brakes", 0) * 0.015
+    player_speed = car_snap.get("top_speed", 350) * speed_mult
+    player_skill = float(drv_snap.get("skill", 7.0))
+
+    npc_speeds = [float(n["speed"]) for n in npcs]
+    avg_npc    = sum(npc_speeds) / len(npc_speeds) if npc_speeds else 350.0
+
+    fuel      = 100.0
+    tire_wear = 0.0
+    weather   = "clear"
+
+    player_total_time = 0.0
+    npc_times: List[float] = [0.0] * len(npcs)
+
+    qte_hits  = 0
+    qte_total = 0
+    pit_hits  = 0
+    commentary_lines: List[str] = []
+
+    FUEL_BURN  = {"accelerate": 5.5, "same_speed": 3.5, "slow_down": 2.0, "pit_stop": 0.0}
+    WEAR_RATE  = {"accelerate": 9.0, "same_speed": 5.5, "slow_down": 3.0, "pit_stop": 0.0}
+
+    def _player_turn_time(choice: str) -> float:
+        base = 90.0 * (avg_npc / max(player_speed, 1))
+        skill_bonus = (player_skill - 7.0) * 0.08
+        wear_pen    = tire_wear * 0.012
+        fuel_pen    = max(0, (50 - fuel)) * 0.008
+        choice_mod  = {"accelerate": -0.5, "same_speed": 0.0, "slow_down": 0.3, "pit_stop": 4.0}.get(choice, 0)
+        brake_bonus = -brake_mult * 0.05
+        jitter      = random.uniform(-0.3, 0.3)
+        return base + choice_mod - skill_bonus + wear_pen + fuel_pen + brake_bonus + jitter
+
+    def _npc_turn_time(npc: Dict) -> float:
+        base = 90.0
+        skill_bonus = (float(npc["skill"]) - 7.0) * 0.08
+        speed_ratio = float(npc["speed"]) / max(avg_npc, 1)
+        jitter = random.uniform(-0.25, 0.35)
+        return base / speed_ratio - skill_bonus + jitter
+
+    def _build_race_embed(turn_num: int, choice_made: Optional[str] = None) -> discord.Embed:
+        lap = ((turn_num - 1) // 4) + 1
+        laps_label = f"Lap {min(lap, 3)}/3  ·  Turn {turn_num}/12"
+        gap_line = ""
+        if player_total_time < sum(npc_times) / max(len(npc_times), 1):
+            gap_line = "📈  Running **ahead** of the field average"
+        else:
+            gap_line = "📉  Running **behind** the field average"
+
+        fuel_bar = "🟢" * int(fuel // 20) + "⬛" * (5 - int(fuel // 20))
+        wear_bar = "🟢" * (5 - int(tire_wear // 20)) + "🔴" * int(tire_wear // 20)
+        weather_icon = "🌧️" if weather == "rain" else "☀️"
+
+        e = discord.Embed(
+            title=f"🏎️  {track['flag']} {track['name']}  —  {laps_label}",
+            color=0x0984e3,
+        )
+        e.add_field(
+            name="⛽  Car Status",
+            value=f"Fuel: {fuel_bar} `{fuel:.0f}%`\nTyres: {wear_bar} `{100-tire_wear:.0f}%`\n{weather_icon} {weather.title()}",
+            inline=True,
+        )
+        e.add_field(
+            name="📡  Position",
+            value=gap_line,
+            inline=True,
+        )
+        if commentary_lines:
+            e.add_field(
+                name="📻  Commentary",
+                value="\n".join(commentary_lines[-3:]),
+                inline=False,
+            )
+        if choice_made:
+            e.set_footer(text=f"Last action: {choice_made.replace('_', ' ').title()}  ·  Next turn coming…")
+        else:
+            e.set_footer(text="Race in progress…")
+        return e
+
+    try:
+        for turn_num in range(1, CAREER_TURNS + 1):
+            lap = ((turn_num - 1) // 4) + 1
+            player_choice: Optional[str] = None
+
+            if random.random() < 0.05:
+                weather = "rain"
+                commentary_lines.append("🌧️  Rain begins to fall on the circuit!")
+
+            # ── SCENARIO TURN ─────────────────────────────────────────
+            if turn_num in CAREER_RACE_SCENARIOS:
+                scenario = CAREER_RACE_SCENARIOS[turn_num].copy()
+                if weather == "rain" and turn_num in (6, 9):
+                    scenario = {
+                        "id": "rain_call",
+                        "title": "🌧️  Rain! Box for Wets or Gamble?",
+                        "description": "Rain is falling! Slick tyres are dangerous. Box for wet tyres or gamble on the drying line?",
+                        "question": "Make the call.",
+                        "options": [
+                            {"label": "🌧️ Box for Wets",   "value": "pit_stop",   "style": discord.ButtonStyle.primary},
+                            {"label": "🎰 Stay on Slicks", "value": "same_speed", "style": discord.ButtonStyle.danger},
+                        ],
+                    }
+
+                sv = CareerScenarioView(user, scenario)
+                scenario_embed = discord.Embed(
+                    title=scenario["title"],
+                    description=f"{scenario['description']}\n\n*{scenario['question']}*",
+                    color=0xF39C12,
+                )
+                scenario_embed.add_field(
+                    name="⛽  Your Status",
+                    value=f"Fuel: `{fuel:.0f}%`  ·  Tyres: `{100-tire_wear:.0f}%`  ·  Lap {lap}/3",
+                    inline=False,
+                )
+                scenario_embed.set_footer(text=f"⏱️  {user.display_name} — you have 30 seconds to decide!")
+
+                try:
+                    await msg_obj.edit(embed=scenario_embed, view=sv)
+                except Exception:
+                    pass
+
+                try:
+                    await channel.send(
+                        f"⚠️  {user.mention} — **{scenario['title']}** Make your call now!",
+                        delete_after=30,
+                    )
+                except Exception:
+                    pass
+
+                try:
+                    await asyncio.wait_for(sv.chosen.wait(), timeout=31)
+                except asyncio.TimeoutError:
+                    pass
+
+                player_choice = sv.choice or "same_speed"
+                if player_choice == "pit_stop":
+                    pit_hits += 1
+
+            else:
+                # ── AUTO TURN ──────────────────────────────────────────
+                if tire_wear > 75 or fuel < 25:
+                    player_choice = random.choices(
+                        ["accelerate", "same_speed", "slow_down"],
+                        weights=[0.15, 0.55, 0.30]
+                    )[0]
+                elif tire_wear > 50 or fuel < 50:
+                    player_choice = random.choices(
+                        ["accelerate", "same_speed", "slow_down"],
+                        weights=[0.25, 0.55, 0.20]
+                    )[0]
+                else:
+                    player_choice = random.choices(
+                        ["accelerate", "same_speed", "slow_down"],
+                        weights=[0.35, 0.50, 0.15]
+                    )[0]
+
+            # ── Apply consumables ──────────────────────────────────────
+            if player_choice == "pit_stop":
+                fuel      = 100.0
+                tire_wear = 0.0
+                commentary_lines.append(f"🔧  **{user.display_name}** pits — fresh tyres and fuel!")
+            else:
+                fuel      = max(0, fuel      - FUEL_BURN.get(player_choice, 3.5))
+                tire_wear = min(100, tire_wear + WEAR_RATE.get(player_choice, 5.5))
+
+            # ── Calculate times ────────────────────────────────────────
+            p_time = _player_turn_time(player_choice)
+            player_total_time += p_time
+            for i, npc in enumerate(npcs):
+                npc_times[i] += _npc_turn_time(npc)
+
+            # ── Update race embed ──────────────────────────────────────
+            try:
+                await msg_obj.edit(embed=_build_race_embed(turn_num, player_choice), view=None)
+            except Exception:
+                pass
+
+            # ── REACTION CHALLENGE (channel only, auto-removes) ────────
+            if turn_num in REACTION_TURNS:
+                qte_total += 1
+                direction  = random.choice(REACTION_DIRECTIONS)
+                dir_label  = REACTION_LABELS[direction]
+
+                react_embed = discord.Embed(
+                    title="⚡  REACTION CHALLENGE!",
+                    description=(
+                        f"{user.mention} — Hit  **{dir_label}**  as fast as you can!\n\n"
+                        f"❌ Wrong direction = **+2.0s penalty**\n"
+                        f"⏱️ Miss = **+0.3s penalty**"
+                    ),
+                    color=0xF1C40F,
+                )
+                react_embed.set_footer(text="⏱️  5 seconds — GO!")
+
+                rv   = CareerReactionView(direction, user)
+                rmsg = None
+                try:
+                    await channel.send(
+                        f"⚡  {user.mention} — **REACTION CHALLENGE!**  Hit  **{dir_label}**  NOW!",
+                        delete_after=6,
+                    )
+                    rmsg = await channel.send(embed=react_embed, view=rv)
+                except Exception:
+                    rv.done.set()
+
+                try:
+                    await asyncio.wait_for(rv.done.wait(), timeout=5.5)
+                except asyncio.TimeoutError:
+                    rv.stop()
+                    if rmsg:
+                        try:
+                            await rmsg.edit(
+                                content="⏱️  Too slow! Penalty applied.",
+                                embed=None,
+                                view=None,
+                            )
+                        except Exception:
+                            pass
+
+                if rv.result:
+                    correct, elapsed = rv.result
+                    if correct:
+                        qte_hits += 1
+                        player_total_time -= 0.5
+                        commentary_lines.append(f"⚡  **{user.display_name}** nailed the reaction in `{elapsed:.2f}s`! +0.5s boost 🚀")
+                    else:
+                        player_total_time += 2.0
+                        commentary_lines.append(f"❌  **{user.display_name}** hit the wrong direction — +2.0s penalty!")
+                else:
+                    player_total_time += 0.3
+                    commentary_lines.append(f"⏱️  **{user.display_name}** missed the reaction — +0.3s penalty.")
+
+                await asyncio.sleep(1.5)
+            else:
+                await asyncio.sleep(2.5)
+
+    except Exception as e:
+        commentary_lines.append(f"⚠️  Race interrupted: {e}")
+
+    # ── Calculate Final Position ────────────────────────────────────────
+    field: List[Dict] = []
+    for i, npc in enumerate(npcs):
+        field.append({"name": npc["name"], "time": npc_times[i], "is_player": False})
+    field.append({"name": user.display_name, "time": player_total_time, "is_player": True})
+    field.sort(key=lambda x: x["time"])
+
+    position = 1
+    standings = []
+    leader_time = field[0]["time"] if field else player_total_time
+    for i, car in enumerate(field, 1):
+        gap_secs = car["time"] - leader_time
+        gap_str  = "LEADER" if i == 1 else f"+{gap_secs:.3f}s"
+        if car["is_player"]:
+            position = i
+        standings.append({
+            "position":  i,
+            "name":      car["name"],
+            "gap_str":   gap_str,
+            "is_player": car["is_player"],
+        })
+
+    points = CAREER_PTS.get(position, 0)
+    coins  = RACE_PAYOUT.get(position, 10)
+
+    return {
+        "match_num": match_num,
+        "standings": standings,
+        "position":  position,
+        "coins":     coins,
+        "points":    points,
+        "track":     track,
+        "qte_hits":  qte_hits,
+        "qte_total": qte_total,
+        "pit_hits":  pit_hits,
+        "state":     {"weather": weather, "fuel": fuel, "tire_wear": tire_wear},
+    }
+
 
 def career_standings_embed(all_standings: List[Dict]) -> discord.Embed:
     lines = []

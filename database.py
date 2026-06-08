@@ -242,6 +242,11 @@ class Database:
         if cur <= 0:
             return False
         player["vote_bonus_matches"] = cur - 1
+        career = player.get("career", {})
+        if career:
+            today = datetime.now().date().isoformat()
+            if career.get("daily_reset_date") == today and career.get("daily_used", 0) > 0:
+                career["daily_used"] = career.get("daily_used", 0) - 1
         self._save_data()
         return True
 

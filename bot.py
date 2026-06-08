@@ -4428,6 +4428,58 @@ async def fusion_slash(interaction: discord.Interaction):
     await interaction.followup.send(embed=_fusion_select_embed(groups, None, interaction.user), view=view)
 
 
+# ==================== CAREER VOTE VIEW ====================
+
+class CareerVoteView(discord.ui.View):
+    """Shown when career daily limit is reached — lets player use a bonus match or vote."""
+
+    def __init__(self, player_id: str, has_bonus: bool):
+        super().__init__(timeout=120)
+        self.player_id  = player_id
+        self.used_bonus = False
+
+        vote_url = "https://top.gg/bot/1228631433501999124/vote"
+        self.add_item(discord.ui.Button(
+            label="Vote on Top.gg for +1 Match",
+            url=vote_url,
+            style=discord.ButtonStyle.link,
+            emoji="🗳️",
+            row=0,
+        ))
+
+        use_btn = discord.ui.Button(
+            label="Use Bonus Match" if has_bonus else "No Bonus Matches",
+            style=discord.ButtonStyle.success if has_bonus else discord.ButtonStyle.secondary,
+            emoji="🏁",
+            disabled=not has_bonus,
+            row=0,
+        )
+        use_btn.callback = self._use_bonus_callback
+        self.add_item(use_btn)
+
+    async def _use_bonus_callback(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.player_id:
+            await interaction.response.send_message("This isn't your career!", ephemeral=True)
+            return
+        if not db.use_vote_bonus_match(self.player_id):
+            await interaction.response.send_message(
+                "❌ No bonus matches left. Vote on Top.gg to earn one!", ephemeral=True
+            )
+            return
+        self.used_bonus = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="✅  Bonus Match Used!",
+                description="Your bonus match has been applied.\nRun `/career_match` now to play your extra race!",
+                color=0x00b894,
+            ),
+            view=self,
+        )
+        self.stop()
+
+
 # ==================== CAREER MODE ====================
 
 @bot.tree.command(name="career", description="Start or view your F1 Career Mode season")
@@ -4556,8 +4608,26 @@ async def career_match_slash(interaction: discord.Interaction):
         elif reason.startswith("cooldown:"):
             secs = int(reason.split(":")[1])
             ts   = career_mod.next_unlock_timestamp(career)
-            msg  = f"⏰ Daily limit reached. Next match unlocks <t:{ts}:R> ({career_mod.fmt_secs(secs)})." if ts else f"⏰ Cooldown: {career_mod.fmt_secs(secs)} remaining."
-            await interaction.followup.send(msg)
+            cooldown_str = (
+                f"⏰ Daily limit reached. Next match unlocks <t:{ts}:R> ({career_mod.fmt_secs(secs)})."
+                if ts else f"⏰ Cooldown: {career_mod.fmt_secs(secs)} remaining."
+            )
+            bonus = db.get_vote_bonus_matches(player_id)
+            limit_embed = discord.Embed(
+                title="🏁  Daily Limit Reached",
+                description=(
+                    f"{cooldown_str}\n\n"
+                    + (
+                        f"You have **{bonus} bonus {'match' if bonus == 1 else 'matches'}** saved up! Click below to use one."
+                        if bonus > 0
+                        else "**Vote for the bot on Top.gg** to earn an extra match right now!"
+                    )
+                ),
+                color=0xE10600,
+            )
+            limit_embed.set_footer(text="Use /vote to claim voting rewards including bonus career matches.")
+            view = CareerVoteView(player_id, has_bonus=bonus > 0)
+            await interaction.followup.send(embed=limit_embed, view=view)
         return
 
     match_num = career.get("matches_completed", 0) + 1
