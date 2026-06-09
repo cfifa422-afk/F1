@@ -4428,6 +4428,116 @@ async def fusion_slash(interaction: discord.Interaction):
     await interaction.followup.send(embed=_fusion_select_embed(groups, None, interaction.user), view=view)
 
 
+# ==================== VOTE COMMAND ====================
+
+TOPGG_VOTE_URL = "https://top.gg/bot/1228631433501999124/vote"
+VOTE_COINS_REWARD = 150
+
+class VoteClaimView(discord.ui.View):
+    def __init__(self, player_id: str, can_claim: bool):
+        super().__init__(timeout=60)
+        self.player_id = player_id
+
+        self.add_item(discord.ui.Button(
+            label="Vote on Top.gg",
+            url=TOPGG_VOTE_URL,
+            style=discord.ButtonStyle.link,
+            emoji="🗳️",
+            row=0,
+        ))
+
+        claim_btn = discord.ui.Button(
+            label="Claim Reward" if can_claim else "Already Claimed",
+            style=discord.ButtonStyle.success if can_claim else discord.ButtonStyle.secondary,
+            emoji="🎁",
+            disabled=not can_claim,
+            custom_id="vote_claim",
+            row=0,
+        )
+        claim_btn.callback = self._claim_callback
+        self.add_item(claim_btn)
+
+    async def _claim_callback(self, interaction: discord.Interaction):
+        if str(interaction.user.id) != self.player_id:
+            await interaction.response.send_message("This isn't your reward!", ephemeral=True)
+            return
+
+        if not db.can_claim_vote(self.player_id):
+            await interaction.response.send_message(
+                "⏰ You've already claimed your vote reward. Vote again in 12 hours!", ephemeral=True
+            )
+            return
+
+        db.add_coins(self.player_id, VOTE_COINS_REWARD)
+        db.add_vote_bonus_match(self.player_id)
+        db.set_vote_claimed(self.player_id)
+
+        for item in self.children:
+            item.disabled = True
+
+        reward_embed = discord.Embed(
+            title="✅  Vote Reward Claimed!",
+            description=(
+                f"Thanks for voting! You received:\n\n"
+                f"💰 **{VOTE_COINS_REWARD} Race Credits**\n"
+                f"🏁 **+1 Bonus Career Match**\n\n"
+                f"Vote again in **12 hours** for another reward!"
+            ),
+            color=0x00b894,
+        )
+        reward_embed.set_footer(text="Use /career_match to play your bonus race!")
+        await interaction.response.edit_message(embed=reward_embed, view=self)
+        self.stop()
+
+
+@bot.tree.command(name="vote", description="Vote for the bot on Top.gg and claim your reward!")
+async def vote_slash(interaction: discord.Interaction):
+    player_id = str(interaction.user.id)
+    db.ensure_player(player_id, interaction.user.name)
+    await interaction.response.defer(ephemeral=True)
+
+    can_claim = db.can_claim_vote(player_id)
+    bonus = db.get_vote_bonus_matches(player_id)
+
+    if can_claim:
+        desc = (
+            "**Voting is free and takes 5 seconds!**\n\n"
+            "Click **Vote on Top.gg**, then come back and hit **Claim Reward** to get:\n\n"
+            f"💰 **{VOTE_COINS_REWARD} Race Credits**\n"
+            f"🏁 **+1 Bonus Career Match**\n\n"
+            f"You can vote every **12 hours**."
+        )
+        color = 0xE10600
+    else:
+        import re as _re
+        player = db.get_player(player_id)
+        last_str = player.get("last_vote_claimed") if player else None
+        if last_str:
+            from datetime import datetime as _dt
+            elapsed = (_dt.now() - _dt.fromisoformat(last_str)).total_seconds()
+            remaining = max(0, int(12 * 3600 - elapsed))
+            h, m = divmod(remaining // 60, 60)
+            time_str = f"{h}h {m}m" if h else f"{m}m"
+        else:
+            time_str = "soon"
+        desc = (
+            f"You've already voted — thank you! 🎉\n\n"
+            f"Next claim available in **{time_str}**.\n\n"
+            f"Current bonus matches saved: **{bonus}**"
+        )
+        color = 0x636e72
+
+    embed = discord.Embed(
+        title="🗳️  Vote for F1 Card Collection!",
+        description=desc,
+        color=color,
+    )
+    embed.set_footer(text="Your votes help the bot grow — thank you!")
+
+    view = VoteClaimView(player_id, can_claim)
+    await interaction.followup.send(embed=embed, view=view)
+
+
 # ==================== CAREER VOTE VIEW ====================
 
 class CareerVoteView(discord.ui.View):
