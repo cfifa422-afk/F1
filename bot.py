@@ -956,6 +956,15 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
                 f"{interaction.user.mention} You caught **{display}**! ``({card_display_id},  {rarity_label})``\n"
                 f"{extra}{returning_note}"
             )
+
+            # Prompt players who haven't joined career mode yet
+            if not db.get_career(player_id):
+                await interaction.followup.send(
+                    f"🏆 {interaction.user.mention} You don't have a career yet! "
+                    f"Use `/career` to sign up and race through 24 circuits to earn championship points and exclusive cards.",
+                    ephemeral=True,
+                )
+
             self.spawn_view.stop()
         else:
             await interaction.response.send_message(

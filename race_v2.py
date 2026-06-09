@@ -1,14 +1,14 @@
 """
-Revamped /race system — fully interactive, skill-based, pressure-building.
-Gap + position always visible inside every challenge embed.
-No external APIs. Pure Discord.
+/race engine — mirrors career match style.
+Two-player head-to-head: reaction challenges, occasional sequence sprints, tactical decisions.
+Wrong reaction/sequence = +3s penalty. Correct = no change. Tactical choices affect lap time.
 """
 
 import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import discord
 
@@ -16,32 +16,82 @@ import discord
 #  Constants
 # ─────────────────────────────────────────────────────────────
 
-ARROWS = ["⬆️", "⬇️", "⬅️", "➡️"]
-ARROW_LABEL = {"⬆️": "▲  UP", "⬇️": "▼  DOWN", "⬅️": "◀  LEFT", "➡️": "RIGHT  ▶"}
+ARROWS       = ["up", "down", "left", "right"]
+ARROW_LABELS = {"up": "▲  UP", "down": "▼  DOWN", "left": "◀  LEFT", "right": "RIGHT  ▶"}
+ARROW_VISUAL = {"up": "▲", "down": "▼", "left": "◀", "right": "▶"}
 
-BATTLE_GAP   = 0.8   # gap (seconds) that triggers battle mode
-NECK_GAP     = 0.2   # dead-heat threshold
+TOTAL_LAPS   = 3
+TOTAL_TURNS  = 12
 
-C_BLUE   = 0x0984e3
-C_ORANGE = 0xF39C12
-C_PURPLE = 0x6c5ce7
-C_RED    = 0xE10600
+SCENARIO_TURNS  = {3, 6, 9, 11}
+SEQUENCE_CHANCE = 0.30          # 30 % of reaction turns become sequence sprints
+WRONG_PENALTY   = 3.0           # seconds added for wrong/missed reaction
+
+FUEL_BURN = {"accelerate": 5.5, "same_speed": 3.5, "slow_down": 2.0, "pit_stop": 0.0}
+WEAR_RATE = {"accelerate": 9.0, "same_speed": 5.5, "slow_down": 3.0, "pit_stop": 0.0}
+
 C_GREEN  = 0x00b894
+C_AMBER  = 0xfdcb6e
+C_RED    = 0xe17055
 C_DARK   = 0x2d3436
+C_PURPLE = 0x6c5ce7
+C_YELLOW = 0xF1C40F
 
-# 9 segments across 3 laps; battle overrides any segment when gap is close
-BASE_SCHEDULE = [
-    "arrow",    "drag",  "tactical",
-    "arrow",    "drag",  "tactical",
-    "arrow",    "drag",  "tactical",
-]
+RACE_GIF = "https://gifdb.com/images/thumbnail/f1-formula1-gif-qm0m61l3z6ydteoo.gif"
 
-FUEL_BURN = {"push": 9.0, "hold": 4.5, "box": 0.0}
-DNF_WRONG_LIMIT = 4       # wrong arrows in one challenge → DNF risk
+RACE_SCENARIOS: Dict[int, Dict] = {
+    3: {
+        "title": "🛑  Pit Window Open!",
+        "description": "**Lap 1 complete.** Fresh rubber could be decisive — but staying out preserves track position.",
+        "question": "Do you pit for fresh tyres, or push on?",
+        "options": [
+            {"label": "⛽ Pit Now",    "value": "pit_stop",   "style": discord.ButtonStyle.danger},
+            {"label": "🏎️ Stay Out",  "value": "same_speed", "style": discord.ButtonStyle.success},
+        ],
+    },
+    6: {
+        "title": "💨  DRS Zone — Attack or Manage!",
+        "description": "**Mid-race.** The DRS zone opens up. Go flat out or protect your tyres?",
+        "question": "Maximum attack or conserve?",
+        "options": [
+            {"label": "🔥 Max Attack",   "value": "accelerate", "style": discord.ButtonStyle.danger},
+            {"label": "🛡️ Conserve",    "value": "slow_down",  "style": discord.ButtonStyle.secondary},
+        ],
+    },
+    9: {
+        "title": "🚗  Late Race Strategy!",
+        "description": "**Final third.** Tyre wear is critical. Every call is race-defining.",
+        "question": "Push hard, manage tyres, or emergency stop?",
+        "options": [
+            {"label": "🔥 Push Hard",     "value": "accelerate", "style": discord.ButtonStyle.success},
+            {"label": "⏱️ Manage Tyres", "value": "slow_down",  "style": discord.ButtonStyle.secondary},
+            {"label": "⛽ Emergency Pit", "value": "pit_stop",   "style": discord.ButtonStyle.danger},
+        ],
+    },
+    11: {
+        "title": "🏁  FINAL LAP!",
+        "description": "**The white flag is out.** Make it count.",
+        "question": "Flat out or protect the gap?",
+        "options": [
+            {"label": "🔥 FLAT OUT!",        "value": "accelerate", "style": discord.ButtonStyle.danger},
+            {"label": "🛡️ Protect the Gap", "value": "same_speed", "style": discord.ButtonStyle.success},
+        ],
+    },
+}
+
+RAIN_SCENARIO = {
+    "title": "🌧️  Weather Gamble!",
+    "description": "Rain is falling — pit for wets or gamble on the drying line?",
+    "question": "Make the call.",
+    "options": [
+        {"label": "🌧️ Box for Wets",   "value": "pit_stop",   "style": discord.ButtonStyle.primary},
+        {"label": "🎰 Stay on Slicks", "value": "same_speed", "style": discord.ButtonStyle.danger},
+    ],
+}
 
 
 # ─────────────────────────────────────────────────────────────
-#  Race State
+#  State
 # ─────────────────────────────────────────────────────────────
 
 @dataclass
@@ -58,19 +108,14 @@ class RaceV2State:
     p2_synergy: bool = False
 
     lap:     int   = 1
-    segment: int   = 0      # 0-indexed (0-8)
-    gap:     float = 0.0    # positive = p1 leads, negative = p2 leads
+    segment: int   = 0
+    gap:     float = 0.0
     weather: str   = "clear"
-
-    # Consumables (for tactical realism)
     p1_fuel: float = 100.0
     p2_fuel: float = 100.0
 
-    # Streak tracking
     p1_wrong_streak: int = 0
     p2_wrong_streak: int = 0
-
-    # Stats for results screen
     p1_total_correct: int = 0
     p2_total_correct: int = 0
     p1_total_wrong:   int = 0
@@ -80,418 +125,36 @@ class RaceV2State:
     p1_battles_won:   int = 0
     p2_battles_won:   int = 0
 
-    dnf:    Optional[str] = None    # "p1" or "p2"
-    winner: Optional[str] = None    # "p1" | "p2" | "draw"
+    dnf:    Optional[str] = None
+    winner: Optional[str] = None
     events: List[str]     = field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────
-#  Embed helpers — gap always baked in
+#  Helpers
 # ─────────────────────────────────────────────────────────────
 
-def _gap_bar(gap: float, p1: str, p2: str) -> str:
-    """Compact single-line gap display for every embed."""
-    p1s = p1[:9]
-    p2s = p2[:9]
+def _fuel_bar(fuel: float) -> str:
+    filled = max(0, min(5, int(fuel / 20)))
+    icon = "🟢" if fuel > 50 else ("🟡" if fuel > 25 else "🔴")
+    return f"{icon} `{'█' * filled}{'░' * (5 - filled)}` {fuel:.0f}%"
+
+
+def _tyre_bar(wear: float) -> str:
+    health = 100.0 - wear
+    filled = max(0, min(5, int(health / 20)))
+    icon = "🟢" if health > 60 else ("🟡" if health > 30 else "🔴")
+    return f"{icon} `{'█' * filled}{'░' * (5 - filled)}` {health:.0f}%"
+
+
+def _gap_line(gap: float, p1_name: str, p2_name: str) -> str:
+    """gap = p1_time - p2_time; negative means p1 leads."""
     ag = abs(gap)
     if ag < 0.05:
-        return f"🏎️ **{p1s}** ══ **DEAD HEAT** ══ **{p2s}** 🏎️"
-    filled = min(int(ag / 0.3), 7)
-    bar    = "█" * filled + "░" * (7 - filled)
-    if gap > 0:
-        return f"🏎️ **{p1s}** `+{ag:.2f}s` [{bar}] **{p2s}** 🏎️"
-    else:
-        return f"🏎️ **{p1s}** [{bar}] `+{ag:.2f}s` **{p2s}** 🏎️"
-
-
-def _pressure(gap: float) -> str:
-    ag = abs(gap)
-    if ag < NECK_GAP:
-        return "🔴 **NECK AND NECK** — one mistake ends it!"
-    if ag < BATTLE_GAP:
-        return "🟠 **CLOSE RACE** — battle incoming!"
-    if ag < 1.8:
-        return "🟡 Tight — stay focused"
-    return "🟢 Comfortable gap"
-
-
-def _weather(w: str) -> str:
-    return "🌧️ **RAIN**" if w == "rain" else "☀️ Clear"
-
-
-def race_header(state: RaceV2State) -> str:
-    """3-line block included in the description of EVERY challenge embed."""
-    lap_s  = f"Lap {state.lap}/3  ·  Seg {(state.segment % 3) + 1}/3"
-    fuel_s = f"⛽ {state.p1_fuel:.0f}% / {state.p2_fuel:.0f}%"
-    return (
-        f"{_gap_bar(state.gap, state.p1_name, state.p2_name)}\n"
-        f"{_pressure(state.gap)}  ·  {_weather(state.weather)}\n"
-        f"🏁 {lap_s}  ·  {fuel_s}"
-    )
-
-
-def _prog(done: int, total: int) -> str:
-    return "✅" * done + "⬜" * (total - done)
-
-
-# ─────────────────────────────────────────────────────────────
-#  Arrow Sprint View
-# ─────────────────────────────────────────────────────────────
-
-class ArrowSprintView(discord.ui.View):
-    """
-    4-arrow sequence challenge. Both players click in the correct order.
-    Wrong arrow → resets their progress + penalty.
-    First to complete wins the segment. 8s window (5s in battle mode).
-    """
-    SEQ_LEN = 4
-
-    def __init__(self, state: RaceV2State, sequence: List[str], is_battle: bool = False):
-        timeout = 5.0 if is_battle else 8.0
-        super().__init__(timeout=timeout)
-        self.state      = state
-        self.sequence   = sequence
-        self.is_battle  = is_battle
-        self._timeout_s = timeout
-
-        self.p1_idx   = 0;  self.p2_idx   = 0
-        self.p1_done  = False; self.p2_done  = False
-        self.p1_wrong = 0;  self.p2_wrong = 0
-        self.p1_first = False  # did p1 finish first?
-
-        self.resolved = asyncio.Event()
-        self.msg: Optional[discord.Message] = None
-
-        # Shuffle button layout so arrows aren't predictably placed
-        shuffled = ARROWS.copy()
-        random.shuffle(shuffled)
-        style = discord.ButtonStyle.danger if is_battle else discord.ButtonStyle.primary
-        for arrow in shuffled:
-            btn = discord.ui.Button(
-                label=ARROW_LABEL[arrow],
-                style=style,
-                custom_id=f"arw_{arrow}",
-            )
-            btn.callback = self._make_cb(arrow)
-            self.add_item(btn)
-
-    def _make_cb(self, arrow: str):
-        async def cb(interaction: discord.Interaction):
-            uid = str(interaction.user.id)
-            is_p1 = uid == self.state.p1_id
-            is_p2 = uid == self.state.p2_id
-            if not (is_p1 or is_p2):
-                await interaction.response.send_message(
-                    "❌ You're not in this race!", ephemeral=True
-                )
-                return
-            await interaction.response.defer()
-
-            updated = False
-            if is_p1 and not self.p1_done:
-                if arrow == self.sequence[self.p1_idx]:
-                    self.p1_idx += 1
-                    if self.p1_idx == self.SEQ_LEN:
-                        self.p1_done = True
-                        self.p1_first = not self.p2_done
-                        updated = True
-                else:
-                    self.p1_wrong += 1
-                    self.p1_idx = 0
-                    if self.p1_wrong >= DNF_WRONG_LIMIT:
-                        self.state.dnf = "p1"
-                    updated = True
-
-            elif is_p2 and not self.p2_done:
-                if arrow == self.sequence[self.p2_idx]:
-                    self.p2_idx += 1
-                    if self.p2_idx == self.SEQ_LEN:
-                        self.p2_done = True
-                        updated = True
-                else:
-                    self.p2_wrong += 1
-                    self.p2_idx = 0
-                    if self.p2_wrong >= DNF_WRONG_LIMIT:
-                        self.state.dnf = "p2"
-                    updated = True
-
-            if updated and self.msg:
-                await self._refresh_embed()
-
-            if self.p1_done and self.p2_done:
-                self.resolved.set()
-            if self.state.dnf:
-                self.resolved.set()
-
-        return cb
-
-    async def _refresh_embed(self):
-        s    = self.state
-        seq  = "  ".join(self.sequence)
-        p1_p = _prog(self.p1_idx, self.SEQ_LEN)
-        p2_p = _prog(self.p2_idx, self.SEQ_LEN)
-
-        p1_note = "✅ **DONE!**" if self.p1_done else (f"❌ ×{self.p1_wrong}" if self.p1_wrong else "")
-        p2_note = "✅ **DONE!**" if self.p2_done else (f"❌ ×{self.p2_wrong}" if self.p2_wrong else "")
-
-        title = "⚡  BATTLE MODE — Arrow Duel!" if self.is_battle else "⬆️  Arrow Sprint!"
-        color = C_RED if self.is_battle else C_BLUE
-
-        emb = discord.Embed(title=title, color=color)
-        emb.description = (
-            f"{race_header(s)}\n\n"
-            f"**Sequence:**  {seq}\n\n"
-            f"🔵 **{s.p1_name}**: {p1_p}  {p1_note}\n"
-            f"🔴 **{s.p2_name}**: {p2_p}  {p2_note}\n\n"
-            f"*Wrong arrow = sequence resets · Click in order!*"
-        )
-        emb.set_footer(text=f"⏱️  {self._timeout_s:.0f}s window")
-        try:
-            await self.msg.edit(embed=emb, view=self)
-        except Exception:
-            pass
-
-    async def on_timeout(self):
-        self.resolved.set()
-
-    def calc_delta(self) -> float:
-        """gap_delta: positive = p1 gains."""
-        BASE  = 1.4 if self.is_battle else 0.9
-        WRONG = 0.3
-        SPEED = 0.35
-
-        p1_adv = (BASE if self.p1_done else 0.0) + (SPEED if self.p1_first else 0.0) - self.p1_wrong * WRONG
-        p2_adv = (BASE if self.p2_done else 0.0) + (SPEED if (self.p2_done and not self.p1_first) else 0.0) - self.p2_wrong * WRONG
-
-        # Card skill bonus
-        p1_skill = float(getattr(self.state.p1_driver, "skill", 7.0))
-        p2_skill = float(getattr(self.state.p2_driver, "skill", 7.0))
-        p1_adv += (p1_skill - 7.0) * 0.06
-        p2_adv += (p2_skill - 7.0) * 0.06
-
-        # Synergy
-        if self.state.p1_synergy: p1_adv += 0.12
-        if self.state.p2_synergy: p2_adv += 0.12
-
-        return p1_adv - p2_adv
-
-
-# ─────────────────────────────────────────────────────────────
-#  Drag Race View
-# ─────────────────────────────────────────────────────────────
-
-class DragRaceView(discord.ui.View):
-    """
-    Both players mash the same PUSH button. First to 3 clicks wins DRS.
-    5-second window.
-    """
-    WIN_AT  = 3
-    TIMEOUT = 5.0
-
-    def __init__(self, state: RaceV2State):
-        super().__init__(timeout=self.TIMEOUT)
-        self.state     = state
-        self.p1_clicks = 0
-        self.p2_clicks = 0
-        self.p1_won    = False
-        self.p2_won    = False
-        self.resolved  = asyncio.Event()
-        self.msg: Optional[discord.Message] = None
-
-    @discord.ui.button(label="⚡  PUSH IT!", style=discord.ButtonStyle.success, custom_id="drag_push")
-    async def push_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        uid = str(interaction.user.id)
-        is_p1 = uid == self.state.p1_id
-        is_p2 = uid == self.state.p2_id
-        if not (is_p1 or is_p2):
-            await interaction.response.send_message("❌ You're not in this race!", ephemeral=True)
-            return
-        await interaction.response.defer()
-
-        if is_p1 and not self.p1_won:
-            self.p1_clicks = min(self.p1_clicks + 1, self.WIN_AT)
-            if self.p1_clicks >= self.WIN_AT and not self.p2_won:
-                self.p1_won = True
-                self.resolved.set()
-        elif is_p2 and not self.p2_won:
-            self.p2_clicks = min(self.p2_clicks + 1, self.WIN_AT)
-            if self.p2_clicks >= self.WIN_AT and not self.p1_won:
-                self.p2_won = True
-                self.resolved.set()
-
-        if self.msg:
-            await self._refresh_embed()
-
-    async def _refresh_embed(self):
-        s    = self.state
-        p1_b = "⚡" * self.p1_clicks + "⬜" * (self.WIN_AT - self.p1_clicks)
-        p2_b = "⚡" * self.p2_clicks + "⬜" * (self.WIN_AT - self.p2_clicks)
-        emb  = discord.Embed(title="⚡  Drag Race — PUSH IT!", color=C_ORANGE)
-        emb.description = (
-            f"{race_header(s)}\n\n"
-            f"🔵 **{s.p1_name}**: {p1_b}  `{self.p1_clicks}/{self.WIN_AT}`\n"
-            f"🔴 **{s.p2_name}**: {p2_b}  `{self.p2_clicks}/{self.WIN_AT}`\n\n"
-            f"*First to {self.WIN_AT} clicks takes DRS!*"
-        )
-        emb.set_footer(text="⏱️  5s — CLICK FAST!")
-        try:
-            await self.msg.edit(embed=emb, view=self)
-        except Exception:
-            pass
-
-    async def on_timeout(self):
-        self.resolved.set()
-
-    def calc_delta(self) -> float:
-        BASE  = 0.75
-        SMALL = 0.30
-
-        # DRS specialist perk
-        p1_perks = getattr(self.state.p1_driver, "perks", [])
-        p2_perks = getattr(self.state.p2_driver, "perks", [])
-        p1_drs = 0.25 if "drs_specialist" in p1_perks else 0.0
-        p2_drs = 0.25 if "drs_specialist" in p2_perks else 0.0
-
-        if self.p1_won:
-            return BASE + p1_drs
-        if self.p2_won:
-            return -(BASE + p2_drs)
-        # Partial — more clicks = small edge
-        if self.p1_clicks > self.p2_clicks:
-            return SMALL + p1_drs
-        if self.p2_clicks > self.p1_clicks:
-            return -(SMALL + p2_drs)
-        return 0.0
-
-
-# ─────────────────────────────────────────────────────────────
-#  Tactical View
-# ─────────────────────────────────────────────────────────────
-
-class TacticalView(discord.ui.View):
-    """
-    Strategic call: Push / Hold / Box.
-    Both players choose independently. Card stats + perks influence outcome.
-    20-second window; auto-fills 'hold' on timeout.
-    """
-    TIMEOUT = 20.0
-
-    def __init__(self, state: RaceV2State):
-        super().__init__(timeout=self.TIMEOUT)
-        self.state     = state
-        self.p1_choice: Optional[str] = None
-        self.p2_choice: Optional[str] = None
-        self.resolved  = asyncio.Event()
-        self.msg: Optional[discord.Message] = None
-
-    async def _pick(self, interaction: discord.Interaction, choice: str):
-        uid = str(interaction.user.id)
-        is_p1 = uid == self.state.p1_id
-        is_p2 = uid == self.state.p2_id
-        if not (is_p1 or is_p2):
-            await interaction.response.send_message("❌ You're not in this race!", ephemeral=True)
-            return
-        await interaction.response.defer()
-        if is_p1 and not self.p1_choice:
-            self.p1_choice = choice
-        elif is_p2 and not self.p2_choice:
-            self.p2_choice = choice
-        if self.msg:
-            await self._refresh_embed(reveal=bool(self.p1_choice and self.p2_choice))
-        if self.p1_choice and self.p2_choice:
-            self.resolved.set()
-
-    @discord.ui.button(label="🔥 Push",  style=discord.ButtonStyle.danger,   custom_id="tac_push", row=0)
-    async def push(self, i, b): await self._pick(i, "push")
-
-    @discord.ui.button(label="🛞 Hold",  style=discord.ButtonStyle.primary,  custom_id="tac_hold", row=0)
-    async def hold(self, i, b): await self._pick(i, "hold")
-
-    @discord.ui.button(label="🔧 Box",   style=discord.ButtonStyle.secondary, custom_id="tac_box",  row=0)
-    async def box(self, i, b):  await self._pick(i, "box")
-
-    async def _refresh_embed(self, reveal: bool = False):
-        s  = self.state
-        def _status(choice, name):
-            if choice:
-                return f"✅ **{choice.title()}**" if reveal else "✅ Decided"
-            return "⏳ Deciding…"
-
-        emb = discord.Embed(title="🎯  Tactical Call", color=C_PURPLE)
-        emb.description = (
-            f"{race_header(s)}\n\n"
-            f"🔵 **{s.p1_name}**: {_status(self.p1_choice, s.p1_name)}\n"
-            f"🔴 **{s.p2_name}**: {_status(self.p2_choice, s.p2_name)}\n\n"
-            f"**🔥 Push** — Attack! Burns fuel & tyres for pace\n"
-            f"**🛞 Hold** — Safe and consistent, protect the gap\n"
-            f"**🔧 Box** — Pit stop: lose time, reset fuel & tyres"
-        )
-        emb.set_footer(text="⏱️  20s to decide — driver perks & car stats shape the result!")
-        try:
-            await self.msg.edit(embed=emb, view=self)
-        except Exception:
-            pass
-
-    async def on_timeout(self):
-        if not self.p1_choice: self.p1_choice = "hold"
-        if not self.p2_choice: self.p2_choice = "hold"
-        self.resolved.set()
-
-    def calc_delta(self) -> Tuple[float, str]:
-        """Returns (gap_delta, commentary_line). Also mutates state fuel."""
-        p1c = self.p1_choice or "hold"
-        p2c = self.p2_choice or "hold"
-        s   = self.state
-
-        def _score(choice, car, driver, synergy, fuel):
-            spd   = getattr(car,    "stats", {}).get("acceleration", 7.0)
-            skill = float(getattr(driver, "skill", 7.0))
-            perks = getattr(driver, "perks", [])
-
-            if choice == "push":
-                base = spd * 0.14 + skill * 0.07
-                if fuel < 30: base -= 0.6
-            elif choice == "hold":
-                base = skill * 0.09 + 0.15
-                if "consistency" in perks: base += 0.35
-            else:  # box
-                base = -2.0
-                if "pit_crew_chief" in perks: base += 0.9
-                base += getattr(car, "stats", {}).get("pit_time_bonus", 0.0) * 10
-
-            if synergy: base += 0.18
-            base += random.uniform(-0.25, 0.25)
-            return base
-
-        p1s = _score(p1c, s.p1_car, s.p1_driver, s.p1_synergy, s.p1_fuel)
-        p2s = _score(p2c, s.p2_car, s.p2_driver, s.p2_synergy, s.p2_fuel)
-
-        # Fuel burn
-        s.p1_fuel = max(0.0, s.p1_fuel - FUEL_BURN.get(p1c, 4.5))
-        s.p2_fuel = max(0.0, s.p2_fuel - FUEL_BURN.get(p2c, 4.5))
-        if p1c == "box": s.p1_fuel = 100.0
-        if p2c == "box": s.p2_fuel = 100.0
-
-        # Rain: stay-on-slicks penalty unless "rain_master"
-        if s.weather == "rain":
-            p1_perks = getattr(s.p1_driver, "perks", [])
-            p2_perks = getattr(s.p2_driver, "perks", [])
-            if p1c != "box" and "rain_master" not in p1_perks: p1s -= 0.5
-            if p2c != "box" and "rain_master" not in p2_perks: p2s -= 0.5
-
-        comments = {
-            ("push", "hold"):  "🔥 P1 pushed hard while P2 played it safe!",
-            ("hold", "push"):  "🔥 P2 attacked while P1 managed the gap!",
-            ("push", "push"):  "🔥🔥 Flat-out from both — pure pace decides!",
-            ("hold", "hold"):  "🛞 Both holding position — strategy stalemate.",
-            ("box",  "push"):  "🔧 P1 pits while P2 pushes — undercut attempt!",
-            ("push", "box"):   "🔧 P2 pits while P1 pushes — overcut gamble!",
-            ("box",  "hold"):  "🔧 P1 boxes for fresh rubber — back out soon.",
-            ("hold", "box"):   "🔧 P2 boxes for fresh rubber — back out soon.",
-            ("box",  "box"):   "🔧🔧 Both pit simultaneously — no net change.",
-        }
-        comment = comments.get((p1c, p2c), "Tactical battle continues…")
-        return p1s - p2s, comment
+        return "🏎️ **DEAD HEAT** — anything can happen!"
+    if gap < 0:
+        return f"📍 **{p1_name}** leads by `+{ag:.3f}s`"
+    return f"📍 **{p2_name}** leads by `+{ag:.3f}s`"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -500,473 +163,710 @@ class TacticalView(discord.ui.View):
 
 class RaceAcceptView(discord.ui.View):
     def __init__(self, challenger: discord.Member, opponent: discord.Member):
-        super().__init__(timeout=30.0)
+        super().__init__(timeout=60)
         self.challenger = challenger
         self.opponent   = opponent
         self.accepted   = False
         self.done       = asyncio.Event()
 
-    @discord.ui.button(label="✅  Accept Race", style=discord.ButtonStyle.success, custom_id="race_accept")
+    @discord.ui.button(label="✅  Accept", style=discord.ButtonStyle.success)
     async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.opponent.id:
             await interaction.response.send_message("This challenge isn't for you!", ephemeral=True)
             return
         self.accepted = True
+        self.done.set()
+        self.stop()
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(view=self)
-        self.done.set()
-        self.stop()
 
-    @discord.ui.button(label="❌  Decline",     style=discord.ButtonStyle.danger,   custom_id="race_decline")
+    @discord.ui.button(label="❌  Decline", style=discord.ButtonStyle.danger)
     async def decline(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id not in (self.opponent.id, self.challenger.id):
             await interaction.response.send_message("Not your race!", ephemeral=True)
             return
+        self.done.set()
+        self.stop()
         for item in self.children:
             item.disabled = True
         await interaction.response.edit_message(view=self)
-        self.done.set()
-        self.stop()
 
     async def on_timeout(self):
         self.done.set()
 
 
 # ─────────────────────────────────────────────────────────────
-#  Challenge embed builders (initial state)
+#  Two-player Reaction View  (single direction)
 # ─────────────────────────────────────────────────────────────
 
-def _arrow_embed(state: RaceV2State, sequence: List[str], is_battle: bool, seg_in_lap: int) -> discord.Embed:
-    seq_str = "  ".join(sequence)
-    title   = "⚡  BATTLE MODE — Arrow Duel!" if is_battle else f"⬆️  Arrow Sprint  ·  Segment {seg_in_lap}/3"
-    color   = C_RED if is_battle else C_BLUE
-    timeout = 5 if is_battle else 8
-    emb = discord.Embed(title=title, color=color)
-    emb.description = (
-        f"{race_header(state)}\n\n"
-        f"**Sequence:**  {seq_str}\n\n"
-        f"🔵 **{state.p1_name}**: ⬜⬜⬜⬜\n"
-        f"🔴 **{state.p2_name}**: ⬜⬜⬜⬜\n\n"
-        f"*Wrong arrow = sequence resets · Click in order!*"
-    )
-    emb.set_footer(text=f"⏱️  {timeout}s window  ·  Both players clicking simultaneously")
-    return emb
-
-
-def _drag_embed(state: RaceV2State, seg_in_lap: int) -> discord.Embed:
-    emb = discord.Embed(title=f"⚡  Drag Race — PUSH IT!  ·  Segment {seg_in_lap}/3", color=C_ORANGE)
-    emb.description = (
-        f"{race_header(state)}\n\n"
-        f"🔵 **{state.p1_name}**: ⬜⬜⬜  `0/3`\n"
-        f"🔴 **{state.p2_name}**: ⬜⬜⬜  `0/3`\n\n"
-        f"*First player to click 3 times wins DRS advantage!*"
-    )
-    emb.set_footer(text="⏱️  5s — MASH THAT BUTTON!")
-    return emb
-
-
-def _tactical_embed(state: RaceV2State, seg_in_lap: int) -> discord.Embed:
-    emb = discord.Embed(title=f"🎯  Tactical Call  ·  Segment {seg_in_lap}/3", color=C_PURPLE)
-    emb.description = (
-        f"{race_header(state)}\n\n"
-        f"🔵 **{state.p1_name}**: ⏳ Deciding…\n"
-        f"🔴 **{state.p2_name}**: ⏳ Deciding…\n\n"
-        f"**🔥 Push** — Attack! Burns fuel & tyres for pace\n"
-        f"**🛞 Hold** — Safe and consistent, protect the gap\n"
-        f"**🔧 Box** — Pit stop: lose time, reset fuel & tyres"
-    )
-    emb.set_footer(text="⏱️  20s to decide — driver perks & card stats shape the result!")
-    return emb
-
-
-# ─────────────────────────────────────────────────────────────
-#  Main race coroutine
-# ─────────────────────────────────────────────────────────────
-
-async def run_race(
-    channel: discord.TextChannel,
-    p1: discord.Member,
-    p2: discord.Member,
-    state: RaceV2State,
-) -> Dict:
+class TwoPlayerReactionView(discord.ui.View):
     """
-    Runs the full 9-segment interactive race in the channel.
-    Returns a result dict for coin rewards.
+    Shows 4 direction buttons. Both p1 and p2 click independently.
+    Wrong direction → +3 s penalty. Correct → no change.
     """
 
-    # ── LIGHTS OUT ────────────────────────────────────────────
-    p1_car_name = getattr(state.p1_car, "name", "Unknown Car")
-    p2_car_name = getattr(state.p2_car, "name", "Unknown Car")
-    p1_drv_name = getattr(state.p1_driver, "name", "Unknown Driver")
-    p2_drv_name = getattr(state.p2_driver, "name", "Unknown Driver")
-    p1_skill    = float(getattr(state.p1_driver, "skill", 7.0))
-    p2_skill    = float(getattr(state.p2_driver, "skill", 7.0))
+    def __init__(self, direction: str, p1_id: str, p2_id: str):
+        super().__init__(timeout=5.0)
+        self.direction = direction
+        self.p1_id     = p1_id
+        self.p2_id     = p2_id
 
-    syn_line = ""
-    if state.p1_synergy: syn_line += f"🔗 {p1.display_name} has driver/car **synergy bonus**!  "
-    if state.p2_synergy: syn_line += f"🔗 {p2.display_name} has driver/car **synergy bonus**!"
+        self.p1_result: Optional[bool] = None   # True = correct, False = wrong, None = no click
+        self.p2_result: Optional[bool] = None
+        self._start     = time.time()
+        self.both_done  = asyncio.Event()
 
-    intro = discord.Embed(
-        title="🚦  LIGHTS OUT — AND AWAY WE GO!",
-        color=C_RED,
-    )
-    intro.description = (
-        f"**3 Laps · 9 Challenges · Everything matters**\n\n"
-        f"🔵 **{p1.display_name}**\n"
-        f"└ {p1_drv_name} (Skill {p1_skill:.1f}/10)  ·  {p1_car_name}\n\n"
-        f"🔴 **{p2.display_name}**\n"
-        f"└ {p2_drv_name} (Skill {p2_skill:.1f}/10)  ·  {p2_car_name}\n\n"
-        + (f"{syn_line}\n\n" if syn_line else "")
-        + "🏎️ `⬆️ Arrow Sprint` → `⚡ Drag Race` → `🎯 Tactical` — repeat × 3\n"
-        f"⚡ **Battle Mode** fires automatically when the gap drops below 0.8s!"
-    )
-    intro.set_footer(text="Gap and position shown in every challenge. Good luck!")
-    await channel.send(content=f"{p1.mention} {p2.mention}", embed=intro)
-    await asyncio.sleep(3)
+        dirs = ARROWS.copy()
+        random.shuffle(dirs)
+        for d in dirs:
+            btn = discord.ui.Button(label=ARROW_LABELS[d], style=discord.ButtonStyle.primary)
+            btn.callback = self._make_cb(d)
+            self.add_item(btn)
 
-    # ── SEGMENT LOOP ─────────────────────────────────────────
-    for seg_idx in range(9):
-        state.segment = seg_idx
-        state.lap     = (seg_idx // 3) + 1
-        seg_in_lap    = (seg_idx % 3) + 1
+    def _make_cb(self, clicked: str):
+        async def cb(interaction: discord.Interaction):
+            uid = str(interaction.user.id)
+            is_p1 = uid == self.p1_id
+            is_p2 = uid == self.p2_id
+            if not (is_p1 or is_p2):
+                await interaction.response.send_message("You're not in this race!", ephemeral=True)
+                return
+            if (is_p1 and self.p1_result is not None) or (is_p2 and self.p2_result is not None):
+                await interaction.response.defer()
+                return
 
-        # Lap announcement
-        if seg_in_lap == 1 and seg_idx > 0:
-            lap_col = C_RED if state.lap == 3 else C_BLUE
-            lap_emb = discord.Embed(
-                title=f"🏁  LAP {state.lap} / 3{'  ·  FINAL LAP!' if state.lap == 3 else ''}",
-                color=lap_col,
-            )
-            lap_emb.description = (
-                f"{_gap_bar(state.gap, state.p1_name, state.p2_name)}\n"
-                f"{_pressure(state.gap)}"
-            )
-            if state.lap == 3:
-                lap_emb.set_footer(text="🔴 EVERYTHING ON THE LINE — no more chances after this!")
-            await channel.send(embed=lap_emb)
-            await asyncio.sleep(2)
+            elapsed = time.time() - self._start
+            correct = (clicked == self.direction)
 
-        # Weather event (chance at lap transitions)
-        if seg_in_lap == 1 and seg_idx > 0 and random.random() < 0.22:
-            state.weather = "rain"
-            rain_emb = discord.Embed(
-                title="🌧️  RAIN BEGINS TO FALL",
-                color=0x74b9ff,
-            )
-            rain_emb.description = (
-                f"{_gap_bar(state.gap, state.p1_name, state.p2_name)}\n\n"
-                f"Conditions are changing! Box for wets or gamble on slicks?"
-            )
-            await channel.send(embed=rain_emb)
-            await asyncio.sleep(2)
-
-        # Determine challenge type — Battle overrides when gap is within threshold
-        seg_type = BASE_SCHEDULE[seg_idx]
-        is_battle = abs(state.gap) < BATTLE_GAP and seg_idx > 0
-        if is_battle:
-            seg_type = "battle"
-
-        # ── ARROW / BATTLE ────────────────────────────────────
-        if seg_type in ("arrow", "battle"):
-            sequence = random.sample(ARROWS, 4)
-            view     = ArrowSprintView(state, sequence, is_battle=is_battle)
-            emb      = _arrow_embed(state, sequence, is_battle, seg_in_lap)
-            mention  = f"{p1.mention} {p2.mention}" if is_battle else ""
-            msg      = await channel.send(content=mention or None, embed=emb, view=view)
-            view.msg = msg
-
-            timeout_s = 5.5 if is_battle else 8.5
-            try:
-                await asyncio.wait_for(view.resolved.wait(), timeout=timeout_s)
-            except asyncio.TimeoutError:
-                pass
-
-            delta = view.calc_delta()
-            state.gap             += delta
-            state.p1_total_correct += view.p1_idx
-            state.p2_total_correct += view.p2_idx
-            state.p1_total_wrong   += view.p1_wrong
-            state.p2_total_wrong   += view.p2_wrong
-
-            if is_battle:
-                if delta > 0: state.p1_battles_won += 1
-                elif delta < 0: state.p2_battles_won += 1
-
-            # Result line
-            if view.p1_done and view.p1_first:
-                win_line = f"🔵 **{p1.display_name}** finished first! Gap shift: **{delta:+.2f}s**"
-            elif view.p2_done and not view.p1_first:
-                win_line = f"🔴 **{p2.display_name}** finished first! Gap shift: **{-delta:+.2f}s**"
+            if is_p1:
+                self.p1_result = correct
             else:
-                win_line = f"⏰ Time ran out — partial scores applied  ({delta:+.2f}s)"
+                self.p2_result = correct
 
-            res_emb = discord.Embed(
-                title=("⚡  Battle" if is_battle else "⬆️  Arrow Sprint") + " — Result",
-                color=C_RED if is_battle else C_BLUE,
-            )
-            res_emb.description = (
-                f"{_gap_bar(state.gap, state.p1_name, state.p2_name)}\n\n"
-                f"{win_line}"
-            )
-            await msg.edit(embed=res_emb, view=None)
-
-        # ── DRAG RACE ─────────────────────────────────────────
-        elif seg_type == "drag":
-            view = DragRaceView(state)
-            emb  = _drag_embed(state, seg_in_lap)
-            msg  = await channel.send(embed=emb, view=view)
-            view.msg = msg
-
-            try:
-                await asyncio.wait_for(view.resolved.wait(), timeout=5.5)
-            except asyncio.TimeoutError:
-                pass
-
-            delta = view.calc_delta()
-            state.gap += delta
-            if view.p1_won: state.p1_drag_wins += 1
-            elif view.p2_won: state.p2_drag_wins += 1
-
-            if view.p1_won:
-                win_line = f"🔵 **{p1.display_name}** smashed it — DRS engaged! ({delta:+.2f}s)"
-            elif view.p2_won:
-                win_line = f"🔴 **{p2.display_name}** smashed it — DRS engaged! ({delta:+.2f}s)"
+            if correct:
+                await interaction.response.send_message(
+                    f"✅ **Correct!**  `{elapsed:.2f}s` — no penalty.", ephemeral=True
+                )
             else:
-                win_line = f"⏰ Neither hit 3 — minor shift ({delta:+.2f}s)"
-
-            res_emb = discord.Embed(title="⚡  Drag Race — Result", color=C_ORANGE)
-            res_emb.description = (
-                f"{_gap_bar(state.gap, state.p1_name, state.p2_name)}\n\n{win_line}"
-            )
-            await msg.edit(embed=res_emb, view=None)
-
-        # ── TACTICAL ──────────────────────────────────────────
-        elif seg_type == "tactical":
-            view = TacticalView(state)
-            emb  = _tactical_embed(state, seg_in_lap)
-            msg  = await channel.send(embed=emb, view=view)
-            view.msg = msg
-
-            try:
-                await asyncio.wait_for(view.resolved.wait(), timeout=21.0)
-            except asyncio.TimeoutError:
-                view.p1_choice = view.p1_choice or "hold"
-                view.p2_choice = view.p2_choice or "hold"
-
-            delta, comment = view.calc_delta()
-            state.gap += delta
-
-            await view._refresh_embed(reveal=True)
-            await asyncio.sleep(1)
-
-            res_emb = discord.Embed(title="🎯  Tactical Call — Result", color=C_PURPLE)
-            res_emb.description = (
-                f"{_gap_bar(state.gap, state.p1_name, state.p2_name)}\n\n"
-                f"{comment}\n\n"
-                f"⛽ Fuel — 🔵 {state.p1_fuel:.0f}%  ·  🔴 {state.p2_fuel:.0f}%"
-            )
-            await msg.edit(embed=res_emb, view=None)
-
-        # ── DNF CHECK ─────────────────────────────────────────
-        if state.dnf:
-            dnf_name = p1.display_name if state.dnf == "p1" else p2.display_name
-            survivor  = p2.display_name if state.dnf == "p1" else p1.display_name
-            dnf_emb = discord.Embed(
-                title="💥  TYRE BLOWOUT — DNF!",
-                color=C_DARK,
-            )
-            dnf_emb.description = (
-                f"❌ **{dnf_name}** hit {DNF_WRONG_LIMIT} wrong arrows — catastrophic tyre failure!\n\n"
-                f"🏆 **{survivor}** wins by retirement!\n\n"
-                f"{_gap_bar(state.gap, state.p1_name, state.p2_name)}"
-            )
-            await channel.send(embed=dnf_emb)
-            state.winner = "p2" if state.dnf == "p1" else "p1"
-            break
-
-        # Fuel DNF (only on last lap)
-        if state.lap == 3:
-            if state.p1_fuel <= 0 and state.p2_fuel > 0:
-                state.dnf    = "p1"
-                state.winner = "p2"
-                fuel_emb = discord.Embed(
-                    title="⛽  OUT OF FUEL — DNF!",
-                    color=C_DARK,
+                await interaction.response.send_message(
+                    f"❌ **Wrong direction!**  `+{WRONG_PENALTY:.0f}s` penalty. 💀", ephemeral=True
                 )
-                fuel_emb.description = (
-                    f"🔵 **{p1.display_name}** ran out of fuel on the final lap!\n"
-                    f"🏆 **{p2.display_name}** wins!"
-                )
-                await channel.send(embed=fuel_emb)
-                break
-            elif state.p2_fuel <= 0 and state.p1_fuel > 0:
-                state.dnf    = "p2"
-                state.winner = "p1"
-                fuel_emb = discord.Embed(title="⛽  OUT OF FUEL — DNF!", color=C_DARK)
-                fuel_emb.description = (
-                    f"🔴 **{p2.display_name}** ran out of fuel on the final lap!\n"
-                    f"🏆 **{p1.display_name}** wins!"
-                )
-                await channel.send(embed=fuel_emb)
-                break
 
-        await asyncio.sleep(1.8)
+            if self.p1_result is not None and self.p2_result is not None:
+                self.both_done.set()
+                self.stop()
+        return cb
 
-    # ── DETERMINE WINNER ──────────────────────────────────────
-    if not state.winner:
-        if abs(state.gap) < 0.05:
-            state.winner = "draw"
-        elif state.gap > 0:
-            state.winner = "p1"
-        else:
-            state.winner = "p2"
-
-    return _build_result(state)
+    async def on_timeout(self):
+        self.both_done.set()
 
 
 # ─────────────────────────────────────────────────────────────
-#  Result helpers
+#  Two-player Sequence View  (4-arrow sprint)
 # ─────────────────────────────────────────────────────────────
 
-def _build_result(state: RaceV2State) -> Dict:
-    margin     = abs(state.gap)
-    close_race = margin < 0.6 and not state.dnf
+class TwoPlayerSequenceView(discord.ui.View):
+    """
+    Both players independently complete a 4-arrow sequence.
+    Wrong arrow → immediate +3 s penalty for that player.
+    Full correct sequence → no penalty.
+    """
 
-    p1_perfect = state.p1_total_wrong == 0 and (state.p1_total_correct + state.p1_drag_wins) > 0
-    p2_perfect = state.p2_total_wrong == 0 and (state.p2_total_correct + state.p2_drag_wins) > 0
+    SEQ_LEN = 4
 
-    base_win  = 110
-    base_lose = 20
-    close_win_bonus  = 45
-    close_lose_bonus = 30
-    perfect_bonus    = 30
+    def __init__(self, sequence: List[str], p1_id: str, p2_id: str):
+        super().__init__(timeout=8.0)
+        self.sequence  = sequence
+        self.p1_id     = p1_id
+        self.p2_id     = p2_id
 
-    p1_coins = (base_win  if state.winner == "p1" else base_lose)
-    p2_coins = (base_win  if state.winner == "p2" else base_lose)
-    if state.winner == "draw":
-        p1_coins = p2_coins = 60
+        self.p1_idx   = 0;  self.p2_idx   = 0
+        self.p1_done  = False; self.p2_done  = False
+        self.p1_wrong = False; self.p2_wrong = False
+        self.both_done = asyncio.Event()
 
-    if close_race:
-        p1_coins += close_win_bonus if state.winner == "p1" else close_lose_bonus
-        p2_coins += close_win_bonus if state.winner == "p2" else close_lose_bonus
+        dirs = ARROWS.copy()
+        random.shuffle(dirs)
+        for d in dirs:
+            btn = discord.ui.Button(label=ARROW_LABELS[d], style=discord.ButtonStyle.primary)
+            btn.callback = self._make_cb(d)
+            self.add_item(btn)
 
-    if p1_perfect: p1_coins += perfect_bonus
-    if p2_perfect: p2_coins += perfect_bonus
+    def _prog(self, idx: int) -> str:
+        return "✅" * idx + "⬜" * (self.SEQ_LEN - idx)
 
-    return {
-        "winner":        state.winner,
-        "winner_id":     state.p1_id if state.winner == "p1" else (state.p2_id if state.winner == "p2" else None),
-        "loser_id":      state.p2_id if state.winner == "p1" else (state.p1_id if state.winner == "p2" else None),
-        "gap":           state.gap,
-        "margin":        margin,
-        "close_race":    close_race,
-        "dnf":           state.dnf,
-        "p1_coins":      p1_coins,
-        "p2_coins":      p2_coins,
-        "p1_correct":    state.p1_total_correct,
-        "p2_correct":    state.p2_total_correct,
-        "p1_wrong":      state.p1_total_wrong,
-        "p2_wrong":      state.p2_total_wrong,
-        "p1_drag_wins":  state.p1_drag_wins,
-        "p2_drag_wins":  state.p2_drag_wins,
-        "p1_battles":    state.p1_battles_won,
-        "p2_battles":    state.p2_battles_won,
-        "p1_perfect":    p1_perfect,
-        "p2_perfect":    p2_perfect,
-    }
+    def _make_cb(self, clicked: str):
+        async def cb(interaction: discord.Interaction):
+            uid = str(interaction.user.id)
+            is_p1 = uid == self.p1_id
+            is_p2 = uid == self.p2_id
+            if not (is_p1 or is_p2):
+                await interaction.response.send_message("You're not in this race!", ephemeral=True)
+                return
+
+            if is_p1:
+                if self.p1_done or self.p1_wrong:
+                    await interaction.response.defer()
+                    return
+                if clicked == self.sequence[self.p1_idx]:
+                    self.p1_idx += 1
+                    if self.p1_idx == self.SEQ_LEN:
+                        self.p1_done = True
+                        await interaction.response.send_message(
+                            "✅ **Sequence complete!** No penalty.", ephemeral=True
+                        )
+                    else:
+                        await interaction.response.send_message(
+                            f"{self._prog(self.p1_idx)}  `{self.p1_idx}/{self.SEQ_LEN}`", ephemeral=True
+                        )
+                else:
+                    self.p1_wrong = True
+                    await interaction.response.send_message(
+                        f"❌ **Wrong arrow!**  `+{WRONG_PENALTY:.0f}s` penalty.", ephemeral=True
+                    )
+            else:
+                if self.p2_done or self.p2_wrong:
+                    await interaction.response.defer()
+                    return
+                if clicked == self.sequence[self.p2_idx]:
+                    self.p2_idx += 1
+                    if self.p2_idx == self.SEQ_LEN:
+                        self.p2_done = True
+                        await interaction.response.send_message(
+                            "✅ **Sequence complete!** No penalty.", ephemeral=True
+                        )
+                    else:
+                        await interaction.response.send_message(
+                            f"{self._prog(self.p2_idx)}  `{self.p2_idx}/{self.SEQ_LEN}`", ephemeral=True
+                        )
+                else:
+                    self.p2_wrong = True
+                    await interaction.response.send_message(
+                        f"❌ **Wrong arrow!**  `+{WRONG_PENALTY:.0f}s` penalty.", ephemeral=True
+                    )
+
+            both_resolved = (
+                (self.p1_done or self.p1_wrong) and
+                (self.p2_done or self.p2_wrong)
+            )
+            if both_resolved:
+                self.both_done.set()
+                self.stop()
+        return cb
+
+    async def on_timeout(self):
+        self.both_done.set()
 
 
-def build_result_embed(
-    result: Dict,
-    p1: discord.Member,
-    p2: discord.Member,
-    state: RaceV2State,
-) -> discord.Embed:
-    winner_m = p1 if result["winner"] == "p1" else (p2 if result["winner"] == "p2" else None)
-    loser_m  = p2 if result["winner"] == "p1" else (p1 if result["winner"] == "p2" else None)
+# ─────────────────────────────────────────────────────────────
+#  Two-player Scenario View  (tactical decision)
+# ─────────────────────────────────────────────────────────────
 
-    if result["winner"] == "draw":
-        title = "🏁  Race Over — DEAD HEAT!"
-        desc  = f"**{state.margin:.3f}s** separates them — almost impossible to call!"
-        color = C_BLUE
-    elif result["dnf"]:
-        title = f"🏆  {winner_m.display_name} Wins by Retirement!"
-        desc  = f"💥 **{loser_m.display_name}** suffered a catastrophic failure.\n**{winner_m.display_name}** takes the chequered flag!"
-        color = C_DARK
-    elif result["close_race"]:
-        title = f"🏆  Photo Finish — {winner_m.display_name} Wins!"
-        desc  = f"Margin: **+{result['margin']:.3f}s** — an absolute thriller!"
-        color = C_GREEN
-    else:
-        title = f"🏆  {winner_m.display_name} Wins!"
-        desc  = f"Margin of victory: **+{result['margin']:.2f}s**"
-        color = C_GREEN
+class TwoPlayerScenarioView(discord.ui.View):
+    """Both players pick a tactical option independently. Wait for both or timeout."""
 
-    emb = discord.Embed(title=title, description=desc, color=color)
+    def __init__(self, p1: discord.Member, p2: discord.Member, scenario: Dict):
+        super().__init__(timeout=30)
+        self.p1_id = str(p1.id)
+        self.p2_id = str(p2.id)
+        self.p1_choice: Optional[str] = None
+        self.p2_choice: Optional[str] = None
+        self.both_done = asyncio.Event()
 
-    def _perf(correct, wrong, drag, battles, coins, perfect):
-        lines = [
-            f"🎯 Arrow hits: **{correct}**",
-            f"❌ Mistakes: **{wrong}**",
-            f"⚡ Drag wins: **{drag}**",
-            f"⚔️ Battles won: **{battles}**",
-            f"💰 +**{coins}** coins" + (" *(+perfect bonus!)*" if perfect else ""),
-        ]
-        return "\n".join(lines)
+        for opt in scenario["options"]:
+            btn   = discord.ui.Button(label=opt["label"], style=opt["style"])
+            value = opt["value"]
+            label = opt["label"]
 
-    emb.add_field(
-        name=f"🔵 {p1.display_name}",
-        value=_perf(result["p1_correct"], result["p1_wrong"], result["p1_drag_wins"],
-                    result["p1_battles"], result["p1_coins"], result["p1_perfect"]),
-        inline=True,
-    )
-    emb.add_field(
-        name=f"🔴 {p2.display_name}",
-        value=_perf(result["p2_correct"], result["p2_wrong"], result["p2_drag_wins"],
-                    result["p2_battles"], result["p2_coins"], result["p2_perfect"]),
-        inline=True,
-    )
+            async def _cb(interaction: discord.Interaction, _v=value, _l=label):
+                uid = str(interaction.user.id)
+                if uid == self.p1_id:
+                    if self.p1_choice:
+                        await interaction.response.defer()
+                        return
+                    self.p1_choice = _v
+                    await interaction.response.send_message(f"✅ **{_l}** locked in!", ephemeral=True)
+                elif uid == self.p2_id:
+                    if self.p2_choice:
+                        await interaction.response.defer()
+                        return
+                    self.p2_choice = _v
+                    await interaction.response.send_message(f"✅ **{_l}** locked in!", ephemeral=True)
+                else:
+                    await interaction.response.send_message("This isn't your race!", ephemeral=True)
+                    return
 
-    footer_parts = []
-    if result["close_race"]:
-        footer_parts.append("🔥 Close race bonus applied!")
-    if result["p1_perfect"] or result["p2_perfect"]:
-        footer_parts.append("⭐ Perfect run bonus awarded!")
-    footer_parts.append("Use /race to challenge again!")
-    emb.set_footer(text="  ·  ".join(footer_parts))
+                if self.p1_choice and self.p2_choice:
+                    self.both_done.set()
+                    self.stop()
 
-    return emb
+            btn.callback = _cb
+            self.add_item(btn)
 
+    async def on_timeout(self):
+        self.both_done.set()
+
+
+# ─────────────────────────────────────────────────────────────
+#  Embeds
+# ─────────────────────────────────────────────────────────────
 
 def build_challenge_embed_v2(
     challenger: discord.Member,
-    opponent: discord.Member,
-    p1_car, p1_driver,
-    p2_car, p2_driver,
-    synergy1: bool,
-    synergy2: bool,
+    opponent:   discord.Member,
+    p1_car,
+    p1_driver,
+    p2_car,
+    p2_driver,
+    synergy1,
+    synergy2,
 ) -> discord.Embed:
-    """The initial challenge / accept embed."""
-    p1_speed = getattr(p1_car, "stats", {}).get("top_speed", "?")
-    p2_speed = getattr(p2_car, "stats", {}).get("top_speed", "?")
-    p1_skill = float(getattr(p1_driver, "skill", 7.0))
-    p2_skill = float(getattr(p2_driver, "skill", 7.0))
+    from cards import RARITY_EMOJIS
+    d1_e = RARITY_EMOJIS.get(p1_driver.rarity, "")
+    c1_e = RARITY_EMOJIS.get(p1_car.rarity,    "")
+    d2_e = RARITY_EMOJIS.get(p2_driver.rarity,  "")
+    c2_e = RARITY_EMOJIS.get(p2_car.rarity,     "")
 
-    emb = discord.Embed(
-        title=f"🏁  Race Challenge!",
+    e = discord.Embed(
+        title="⚡  Race Challenge!",
         description=(
-            f"**{challenger.display_name}** has challenged **{opponent.display_name}** to a race!\n\n"
-            f"🔵 **{challenger.display_name}** — {getattr(p1_driver,'name','?')} · Skill {p1_skill:.1f}/10\n"
-            f"└ {getattr(p1_car,'name','?')}  ·  {p1_speed} km/h"
-            + ("  🔗 Synergy!" if synergy1 else "") + "\n\n"
-            f"🔴 **{opponent.display_name}** — {getattr(p2_driver,'name','?')} · Skill {p2_skill:.1f}/10\n"
-            f"└ {getattr(p2_car,'name','?')}  ·  {p2_speed} km/h"
-            + ("  🔗 Synergy!" if synergy2 else "") + "\n\n"
-            f"**3 Laps · 9 Interactive Challenges**\n"
-            f"Arrow sprints · Drag races · Tactical calls · Battle mode"
+            f"{challenger.mention} is challenging {opponent.mention}!\n"
+            f"*{opponent.display_name} has 60 seconds to accept or decline.*"
         ),
-        color=C_RED,
+        color=C_DARK,
     )
-    emb.set_footer(text=f"{opponent.display_name} has 30 seconds to accept!")
-    return emb
+    p1_val = (
+        f"{d1_e} **{p1_driver.name}** ({p1_driver.code})  ·  Skill {p1_driver.skill}/10\n"
+        f"{c1_e} **{p1_car.name}**  ·  {p1_car.top_speed} km/h"
+    )
+    if synergy1:
+        p1_val += f"\n✨ *{synergy1['name']}*"
+
+    p2_val = (
+        f"{d2_e} **{p2_driver.name}** ({p2_driver.code})  ·  Skill {p2_driver.skill}/10\n"
+        f"{c2_e} **{p2_car.name}**  ·  {p2_car.top_speed} km/h"
+    )
+    if synergy2:
+        p2_val += f"\n✨ *{synergy2['name']}*"
+
+    e.add_field(name=f"🏎️  {challenger.display_name}", value=p1_val, inline=True)
+    e.add_field(name=f"🏎️  {opponent.display_name}",   value=p2_val, inline=True)
+    e.add_field(
+        name="🎮  Race Format",
+        value=(
+            "**3 Laps · 12 Turns**\n"
+            "⚡ Reaction challenges — click the right arrow fast!\n"
+            "🔢 Sequence sprints — enter all 4 arrows in order!\n"
+            "🛑 Tactical decisions — pit, push, or conserve!\n"
+            f"❌ Wrong answer = **+{WRONG_PENALTY:.0f}s penalty**"
+        ),
+        inline=False,
+    )
+    e.set_image(url=RACE_GIF)
+    e.set_footer(text="3 Laps · 12 Turns · May the best driver win!")
+    return e
+
+
+def build_result_embed(
+    result:  Dict,
+    p1:      discord.Member,
+    p2:      discord.Member,
+    state:   RaceV2State,
+) -> discord.Embed:
+    winner_id = result.get("winner")
+    if winner_id == "p1":
+        title = f"🏁  {p1.display_name} wins!"
+        color = C_GREEN
+    elif winner_id == "p2":
+        title = f"🏁  {p2.display_name} wins!"
+        color = C_RED
+    else:
+        title = "🏁  Dead heat — it's a draw!"
+        color = C_AMBER
+
+    e = discord.Embed(title=title, color=color)
+
+    p1t = result["p1_time"]
+    p2t = result["p2_time"]
+    gap = abs(p1t - p2t)
+
+    e.add_field(
+        name=f"{'🥇' if winner_id == 'p1' else '🥈'} {p1.display_name}",
+        value=(
+            f"Reactions hit: **{result['p1_hits']}/{result['p1_challenges']}**\n"
+            f"Penalties: **{result['p1_penalties']}×**  (+{result['p1_penalty_time']:.0f}s total)"
+        ),
+        inline=True,
+    )
+    e.add_field(
+        name=f"{'🥇' if winner_id == 'p2' else '🥈'} {p2.display_name}",
+        value=(
+            f"Reactions hit: **{result['p2_hits']}/{result['p2_challenges']}**\n"
+            f"Penalties: **{result['p2_penalties']}×**  (+{result['p2_penalty_time']:.0f}s total)"
+        ),
+        inline=True,
+    )
+    e.add_field(
+        name="📊  Race Summary",
+        value=(
+            f"Winning margin: `{gap:.3f}s`  ·  Weather: {result.get('weather', 'clear').title()}\n"
+            f"💰 {p1.display_name}: **+{result['p1_coins']:,}** coins\n"
+            f"💰 {p2.display_name}: **+{result['p2_coins']:,}** coins"
+        ),
+        inline=False,
+    )
+    e.set_footer(text="Use /race to challenge again  ·  /garage to upgrade  ·  /career to join career mode")
+    return e
+
+
+# ─────────────────────────────────────────────────────────────
+#  Main Race Engine
+# ─────────────────────────────────────────────────────────────
+
+async def run_race(
+    channel,
+    p1:    discord.Member,
+    p2:    discord.Member,
+    state: RaceV2State,
+) -> Dict:
+
+    p1_total_time = 0.0
+    p2_total_time = 0.0
+    p1_fuel = 100.0;  p2_fuel = 100.0
+    p1_wear = 0.0;    p2_wear = 0.0
+    weather = "clear"
+    commentary: List[str] = []
+
+    p1_hits = 0;         p2_hits = 0
+    p1_penalties = 0;    p2_penalties = 0
+    p1_penalty_time = 0.0; p2_penalty_time = 0.0
+    challenge_count = 0
+
+    # ── Lap time formula ─────────────────────────────────────
+    def _turn_time(car, driver, fuel: float, wear: float, choice: str) -> float:
+        base       = 90.0 * (350.0 / max(car.top_speed, 1))
+        skill_b    = (float(driver.skill) - 7.0) * 0.08
+        wear_pen   = wear * 0.012
+        fuel_pen   = max(0.0, (50.0 - fuel)) * 0.008
+        choice_mod = {"accelerate": -0.5, "same_speed": 0.0,
+                      "slow_down": 0.3,   "pit_stop": 4.0}.get(choice, 0.0)
+        jitter = random.uniform(-0.25, 0.25)
+        return base + choice_mod - skill_b + wear_pen + fuel_pen + jitter
+
+    # ── Live embed ────────────────────────────────────────────
+    def _build_embed(turn: int, p1_choice=None, p2_choice=None) -> discord.Embed:
+        lap   = min(((turn - 1) // 4) + 1, 3) if turn > 0 else 1
+        w_ico = "🌧️ Rain" if weather == "rain" else "☀️ Clear"
+        gap   = p1_total_time - p2_total_time   # negative = p1 leads
+
+        ag = abs(gap)
+        if ag < 0.5:
+            color = C_AMBER
+        elif gap < 0:
+            color = C_GREEN   # p1 ahead
+        else:
+            color = C_RED     # p2 ahead
+
+        choice_lbl = {
+            "accelerate": "🔥 Pushed Hard",
+            "same_speed": "➡️ Maintained Pace",
+            "slow_down":  "🛑 Lifted Off",
+            "pit_stop":   "🔧 Pit Stop",
+        }
+        p1_cl = choice_lbl.get(p1_choice or "", "")
+        p2_cl = choice_lbl.get(p2_choice or "", "")
+
+        cmt = "\n".join(commentary[-2:]) if commentary else "*Race underway…*"
+
+        e = discord.Embed(
+            title=f"🏎️  {p1.display_name} vs {p2.display_name}",
+            color=color,
+        )
+        e.description = (
+            f"**Lap {lap}/3  ·  Turn {turn}/{TOTAL_TURNS}**  ·  {w_ico}\n\n"
+            f"**{p1.display_name}**\n"
+            f"⛽ {_fuel_bar(p1_fuel)}  ·  🏎️ {_tyre_bar(p1_wear)}\n"
+            + (f"*{p1_cl}*\n" if p1_cl else "")
+            + f"\n**{p2.display_name}**\n"
+            f"⛽ {_fuel_bar(p2_fuel)}  ·  🏎️ {_tyre_bar(p2_wear)}\n"
+            + (f"*{p2_cl}*\n" if p2_cl else "")
+            + f"\n{_gap_line(gap, p1.display_name, p2.display_name)}\n\n"
+            f"{'─' * 28}\n"
+            f"{cmt}"
+        )
+        e.set_thumbnail(url=RACE_GIF)
+        e.set_footer(text=f"Turn {turn}/{TOTAL_TURNS}  ·  {p1.display_name} vs {p2.display_name}")
+        return e
+
+    # ── Initial embed ─────────────────────────────────────────
+    msg = await channel.send(embed=_build_embed(0))
+
+    try:
+        for turn in range(1, TOTAL_TURNS + 1):
+            lap       = ((turn - 1) // 4) + 1
+            p1_choice = None
+            p2_choice = None
+
+            # ── Random weather ────────────────────────────────
+            if random.random() < 0.05 and weather == "clear":
+                weather = "rain"
+                commentary.append("🌧️ *Rain begins to fall — conditions changing fast!*")
+
+            # ══════════════════════════════════════════════════
+            # SCENARIO TURN  (turns 3, 6, 9, 11)
+            # ══════════════════════════════════════════════════
+            if turn in RACE_SCENARIOS:
+                scenario = (
+                    RAIN_SCENARIO.copy()
+                    if weather == "rain" and turn in (6, 9)
+                    else RACE_SCENARIOS[turn].copy()
+                )
+
+                sv      = TwoPlayerScenarioView(p1, p2, scenario)
+                w_ico   = "🌧️ Rain" if weather == "rain" else "☀️ Clear"
+
+                scen_emb = discord.Embed(title=scenario["title"], color=0xF39C12)
+                scen_emb.description = (
+                    f"{scenario['description']}\n\n"
+                    f"*{scenario['question']}*\n\n"
+                    f"{'─' * 28}\n"
+                    f"⛽ {_fuel_bar(p1_fuel)} · {_fuel_bar(p2_fuel)}\n"
+                    f"{w_ico}  ·  Lap {lap}/3\n\n"
+                    f"{p1.mention} & {p2.mention} — **both choose!**"
+                )
+                scen_emb.set_footer(text=f"⏱️  30 seconds to decide  ·  Turn {turn}/{TOTAL_TURNS}")
+
+                try:
+                    await msg.edit(embed=scen_emb, view=sv)
+                except Exception:
+                    pass
+
+                try:
+                    await asyncio.wait_for(sv.both_done.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    pass
+
+                p1_choice = sv.p1_choice or "same_speed"
+                p2_choice = sv.p2_choice or "same_speed"
+
+                if p1_choice == "pit_stop":
+                    p1_fuel = 100.0; p1_wear = 0.0
+                    commentary.append(f"🔧 **{p1.display_name}** pits! Fresh rubber and full fuel.")
+                if p2_choice == "pit_stop":
+                    p2_fuel = 100.0; p2_wear = 0.0
+                    commentary.append(f"🔧 **{p2.display_name}** pits! Fresh rubber and full fuel.")
+
+            # ══════════════════════════════════════════════════
+            # REACTION / SEQUENCE TURN
+            # ══════════════════════════════════════════════════
+            else:
+                p1_choice = "same_speed"
+                p2_choice = "same_speed"
+                challenge_count += 1
+                cmsg = None
+
+                await asyncio.sleep(4)  # brief tension before challenge pops
+
+                # ── Decide challenge type ─────────────────────
+                if random.random() < SEQUENCE_CHANCE:
+                    # ─── SEQUENCE SPRINT ─────────────────────
+                    seq        = [random.choice(ARROWS) for _ in range(TwoPlayerSequenceView.SEQ_LEN)]
+                    seq_visual = "  ".join(ARROW_VISUAL[a] for a in seq)
+
+                    ch_emb = discord.Embed(title="🔢  SEQUENCE SPRINT!", color=C_PURPLE)
+                    ch_emb.description = (
+                        f"{p1.mention} & {p2.mention} — **enter the sequence!**\n\n"
+                        f"```\n{seq_visual}\n```\n"
+                        f"*Click the arrows in that exact order.*\n"
+                        f"✅ Full sequence = no penalty\n"
+                        f"❌ Wrong arrow = **+{WRONG_PENALTY:.0f}s** penalty"
+                    )
+                    ch_emb.set_footer(text="⏱️  8 seconds — GO!")
+
+                    sv2 = TwoPlayerSequenceView(seq, state.p1_id, state.p2_id)
+                    try:
+                        cmsg = await channel.send(embed=ch_emb, view=sv2)
+                    except Exception:
+                        sv2.both_done.set()
+
+                    try:
+                        await asyncio.wait_for(sv2.both_done.wait(), timeout=8.2)
+                    except asyncio.TimeoutError:
+                        sv2.stop()
+
+                    p1_pen = not sv2.p1_done
+                    p2_pen = not sv2.p2_done
+
+                    if p1_pen:
+                        p1_total_time   += WRONG_PENALTY
+                        p1_penalties    += 1
+                        p1_penalty_time += WRONG_PENALTY
+                    else:
+                        p1_hits += 1
+
+                    if p2_pen:
+                        p2_total_time   += WRONG_PENALTY
+                        p2_penalties    += 1
+                        p2_penalty_time += WRONG_PENALTY
+                    else:
+                        p2_hits += 1
+
+                    p1_tag = "✅ Nailed it" if not p1_pen else f"❌ +{WRONG_PENALTY:.0f}s"
+                    p2_tag = "✅ Nailed it" if not p2_pen else f"❌ +{WRONG_PENALTY:.0f}s"
+
+                    if cmsg:
+                        try:
+                            await cmsg.edit(
+                                embed=discord.Embed(
+                                    description=(
+                                        f"🔢 Sequence result — "
+                                        f"**{p1.display_name}**: {p1_tag}  ·  "
+                                        f"**{p2.display_name}**: {p2_tag}"
+                                    ),
+                                    color=C_PURPLE,
+                                ),
+                                view=None,
+                            )
+                        except Exception:
+                            pass
+
+                    commentary.append(
+                        f"🔢 Sequence: {p1.display_name} {p1_tag.lower()}, "
+                        f"{p2.display_name} {p2_tag.lower()}."
+                    )
+
+                else:
+                    # ─── SINGLE REACTION CHALLENGE ───────────
+                    direction  = random.choice(ARROWS)
+                    dir_visual = ARROW_VISUAL[direction]
+                    dir_label  = ARROW_LABELS[direction]
+
+                    ch_emb = discord.Embed(title="⚡  REACTION CHALLENGE!", color=C_YELLOW)
+                    ch_emb.description = (
+                        f"{p1.mention} & {p2.mention} — **REACT NOW!**\n\n"
+                        f"```\n   {dir_visual}  {dir_label}\n```\n"
+                        f"✅ Correct = no penalty\n"
+                        f"❌ Wrong direction = **+{WRONG_PENALTY:.0f}s** penalty"
+                    )
+                    ch_emb.set_footer(text="⏱️  5 seconds — GO!")
+
+                    rv = TwoPlayerReactionView(direction, state.p1_id, state.p2_id)
+                    try:
+                        cmsg = await channel.send(embed=ch_emb, view=rv)
+                    except Exception:
+                        rv.both_done.set()
+
+                    try:
+                        await asyncio.wait_for(rv.both_done.wait(), timeout=5.2)
+                    except asyncio.TimeoutError:
+                        rv.stop()
+
+                    # Apply results
+                    if rv.p1_result is True:
+                        p1_hits += 1
+                    else:
+                        p1_total_time   += WRONG_PENALTY
+                        p1_penalties    += 1
+                        p1_penalty_time += WRONG_PENALTY
+
+                    if rv.p2_result is True:
+                        p2_hits += 1
+                    else:
+                        p2_total_time   += WRONG_PENALTY
+                        p2_penalties    += 1
+                        p2_penalty_time += WRONG_PENALTY
+
+                    def _res_tag(res: Optional[bool]) -> str:
+                        if res is True:   return "✅ Correct"
+                        if res is False:  return f"❌ Wrong +{WRONG_PENALTY:.0f}s"
+                        return f"⏱️ Too slow +{WRONG_PENALTY:.0f}s"
+
+                    p1_tag = _res_tag(rv.p1_result)
+                    p2_tag = _res_tag(rv.p2_result)
+
+                    if cmsg:
+                        try:
+                            await cmsg.edit(
+                                embed=discord.Embed(
+                                    description=(
+                                        f"⚡ Result — "
+                                        f"**{p1.display_name}**: {p1_tag}  ·  "
+                                        f"**{p2.display_name}**: {p2_tag}"
+                                    ),
+                                    color=C_YELLOW,
+                                ),
+                                view=None,
+                            )
+                        except Exception:
+                            pass
+
+                    commentary.append(
+                        f"⚡ Reaction: {p1.display_name} {p1_tag.lower()}, "
+                        f"{p2.display_name} {p2_tag.lower()}."
+                    )
+
+            # ── Consumables ───────────────────────────────────
+            _p1c = p1_choice or "same_speed"
+            _p2c = p2_choice or "same_speed"
+            if _p1c != "pit_stop":
+                p1_fuel = max(0.0, p1_fuel - FUEL_BURN.get(_p1c, 3.5))
+                p1_wear = min(100.0, p1_wear + WEAR_RATE.get(_p1c, 5.5))
+            if _p2c != "pit_stop":
+                p2_fuel = max(0.0, p2_fuel - FUEL_BURN.get(_p2c, 3.5))
+                p2_wear = min(100.0, p2_wear + WEAR_RATE.get(_p2c, 5.5))
+
+            # ── Lap times ─────────────────────────────────────
+            p1_total_time += _turn_time(state.p1_car, state.p1_driver, p1_fuel, p1_wear, _p1c)
+            p2_total_time += _turn_time(state.p2_car, state.p2_driver, p2_fuel, p2_wear, _p2c)
+
+            # ── Context commentary ────────────────────────────
+            gap = p1_total_time - p2_total_time
+            if abs(gap) < 0.5:
+                commentary.append("🔥 *Neck and neck — every millisecond counts!*")
+            elif gap < -3.0:
+                commentary.append(f"💨 {p1.display_name} in full control — `{abs(gap):.2f}s` clear!")
+            elif gap > 3.0:
+                commentary.append(f"📡 {p2.display_name} pulling away — gap is `{gap:.2f}s`!")
+
+            # ── Update main embed ─────────────────────────────
+            try:
+                await msg.edit(embed=_build_embed(turn, p1_choice, p2_choice), view=None)
+            except Exception:
+                pass
+
+            await asyncio.sleep(2)
+
+    except Exception as exc:
+        commentary.append(f"⚠️ Race interrupted: {exc}")
+
+    # ─────────────────────────────────────────────────────────
+    #  Final result
+    # ─────────────────────────────────────────────────────────
+    gap = p1_total_time - p2_total_time  # negative = p1 wins
+    if abs(gap) < 0.1:
+        winner = "draw"
+    elif gap < 0:
+        winner = "p1"
+    else:
+        winner = "p2"
+
+    p1_coins = 500 if winner == "p1" else (200 if winner == "draw" else 100)
+    p2_coins = 500 if winner == "p2" else (200 if winner == "draw" else 100)
+
+    return {
+        "winner":          winner,
+        "p1_time":         p1_total_time,
+        "p2_time":         p2_total_time,
+        "p1_coins":        p1_coins,
+        "p2_coins":        p2_coins,
+        "p1_hits":         p1_hits,
+        "p2_hits":         p2_hits,
+        "p1_challenges":   challenge_count,
+        "p2_challenges":   challenge_count,
+        "p1_penalties":    p1_penalties,
+        "p2_penalties":    p2_penalties,
+        "p1_penalty_time": p1_penalty_time,
+        "p2_penalty_time": p2_penalty_time,
+        "weather":         weather,
+    }
