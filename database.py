@@ -118,6 +118,41 @@ class Database:
             player["last_daily_pack"] = datetime.now().isoformat()
             self._save_data()
 
+    def can_claim_weekly(self, player_id: str) -> Tuple[bool, int]:
+        player = self.get_player(player_id)
+        if not player:
+            return True, 0
+        last = player.get("last_weekly_pack")
+        if not last:
+            return True, 0
+        last_dt = datetime.fromisoformat(last)
+        next_dt = last_dt + timedelta(hours=168)
+        now = datetime.now()
+        if now >= next_dt:
+            return True, 0
+        return False, int((next_dt - now).total_seconds())
+
+    def mark_weekly_claimed(self, player_id: str):
+        player = self.get_player(player_id)
+        if player:
+            player["last_weekly_pack"] = datetime.now().isoformat()
+            self._save_data()
+
+    def update_player_stats(self, player_id: str, result: Dict):
+        player = self.get_player(player_id)
+        if not player:
+            return
+        stats = player.setdefault("stats", {"wins": 0, "losses": 0, "dnf": 0, "total_races": 0})
+        status = result.get("status", "")
+        if status == "win":
+            stats["wins"] = stats.get("wins", 0) + 1
+        elif status == "loss":
+            stats["losses"] = stats.get("losses", 0) + 1
+        elif status == "dnf":
+            stats["dnf"] = stats.get("dnf", 0) + 1
+        stats["total_races"] = stats.get("total_races", 0) + 1
+        self._save_data()
+
     def set_equipped(self, player_id: str, card_type: str, card_id: str) -> bool:
         player = self.get_player(player_id)
         if not player:

@@ -84,6 +84,30 @@ PACK_CONFIGS = {
         "guaranteed": None,
         "odds": {"mythic": 0.01, "legendary": 0.01, "epic": 0.07, "rare": 0.30, "common": 0.61},
     },
+    "silver": {
+        "name": "Silver Pack",
+        "emoji": "🥈",
+        "card_count": 3,
+        "cost": 1000,
+        "guaranteed": "rare",
+        "odds": {"mythic": 0.01, "legendary": 0.04, "epic": 0.15, "rare": 0.40, "common": 0.40},
+    },
+    "gold": {
+        "name": "Gold Pack",
+        "emoji": "🥇",
+        "card_count": 3,
+        "cost": 2000,
+        "guaranteed": "epic",
+        "odds": {"mythic": 0.02, "legendary": 0.10, "epic": 0.38, "rare": 0.35, "common": 0.15},
+    },
+    "platinum": {
+        "name": "Platinum Pack",
+        "emoji": "💎",
+        "card_count": 3,
+        "cost": 5000,
+        "guaranteed": "legendary",
+        "odds": {"mythic": 0.05, "legendary": 0.35, "epic": 0.35, "rare": 0.20, "common": 0.05},
+    },
 }
 
 # ==================== SELL VALUES ====================
