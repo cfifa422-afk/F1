@@ -10,6 +10,7 @@ import random
 
 from database import Database, UPGRADE_STATS, UPGRADE_COSTS, UPGRADE_MAX_LEVEL, UPGRADE_INFO
 import cards as card_module
+import race_v2 as race_v2_mod
 import f1_images
 import commentary as commentary_engine
 import card_manager as cm
@@ -3145,7 +3146,7 @@ async def finish_auto_race(
 @bot.tree.command(name="race", description="Challenge another player to an F1 race!")
 @app_commands.describe(opponent="The player you want to race against")
 async def race_slash_command(interaction: discord.Interaction, opponent: discord.Member):
-    player_id  = str(interaction.user.id)
+    player_id   = str(interaction.user.id)
     opponent_id = str(opponent.id)
 
     if interaction.user.id == opponent.id:
@@ -3168,18 +3169,62 @@ async def race_slash_command(interaction: discord.Interaction, opponent: discord
     synergy1 = card_module.check_synergy(p1_driver.code, p1_car.team)
     synergy2 = card_module.check_synergy(p2_driver.code, p2_car.team)
 
-    race, race_id = race_engine.create_race(player_id, opponent_id, p1_car, p1_driver, p2_car, p2_driver)
-    active_race_pairs[player_id]  = race_id
+    # ── Show challenge / accept embed ─────────────────────────
+    accept_view = race_v2_mod.RaceAcceptView(interaction.user, opponent)
+    challenge_emb = race_v2_mod.build_challenge_embed_v2(
+        interaction.user, opponent,
+        p1_car, p1_driver,
+        p2_car, p2_driver,
+        synergy1, synergy2,
+    )
+    await interaction.response.send_message(
+        content=f"{opponent.mention} — you've been challenged!",
+        embed=challenge_emb,
+        view=accept_view,
+    )
+
+    await accept_view.done.wait()
+    if not accept_view.accepted:
+        declined_emb = discord.Embed(
+            title="❌  Challenge Declined",
+            description=f"**{opponent.display_name}** declined the race (or it timed out).",
+            color=0x636e72,
+        )
+        await interaction.edit_original_response(embed=declined_emb, view=None, content=None)
+        return
+
+    # ── Lock both players in ──────────────────────────────────
+    race_id = f"{player_id}_{opponent_id}_{int(__import__('time').time())}"
+    active_race_pairs[player_id]   = race_id
     active_race_pairs[opponent_id] = race_id
 
-    gif_url = random.choice(RACE_GIFS)
-    challenge_embed = build_challenge_embed(
-        interaction.user, opponent,
-        p1_car, p1_driver, p2_car, p2_driver,
-        gif_url, synergy1, synergy2,
+    state = race_v2_mod.RaceV2State(
+        p1_id      = player_id,
+        p2_id      = opponent_id,
+        p1_name    = interaction.user.display_name,
+        p2_name    = opponent.display_name,
+        p1_car     = p1_car,
+        p1_driver  = p1_driver,
+        p2_car     = p2_car,
+        p2_driver  = p2_driver,
+        p1_synergy = synergy1,
+        p2_synergy = synergy2,
     )
-    challenge_view = ChallengeView(interaction.user, opponent, race, gif_url)
-    await interaction.response.send_message(embed=challenge_embed, view=challenge_view)
+
+    channel = interaction.channel
+    try:
+        result = await race_v2_mod.run_race(channel, interaction.user, opponent, state)
+    finally:
+        active_race_pairs.pop(player_id, None)
+        active_race_pairs.pop(opponent_id, None)
+
+    # ── Award coins ───────────────────────────────────────────
+    db.add_coins(player_id, result["p1_coins"])
+    db.add_coins(opponent_id, result["p2_coins"])
+
+    # ── Post result embed ─────────────────────────────────────
+    result_emb = race_v2_mod.build_result_embed(result, interaction.user, opponent, state)
+    await channel.send(embed=result_emb)
 
 
 @bot.command(name="deck")
