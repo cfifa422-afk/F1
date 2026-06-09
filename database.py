@@ -393,13 +393,26 @@ class Database:
         player = self.get_player(player_id)
         if not player:
             return []
-        rarity_order = {"mythic": 0, "legendary": 1, "epic": 2, "rare": 3, "common": 4}
+        rarity_order = {"special": 0, "mythic": 1, "legendary": 2, "epic": 3, "rare": 4, "common": 5}
         all_cards = (
             player["cards"].get("drivers", [])
             + player["cards"].get("cars", [])
             + player["cards"].get("team_assets", [])
         )
-        return sorted(all_cards, key=lambda c: rarity_order.get(c.get("rarity", "common"), 4))
+        return sorted(all_cards, key=lambda c: rarity_order.get(c.get("rarity", "common"), 5))
+
+    def get_special_cards(self, player_id: str) -> List[Dict]:
+        """Return only 'special' rarity cards owned by the player."""
+        return [c for c in self.get_all_cards_sorted(player_id) if c.get("rarity") == "special"]
+
+    def count_wild_catches(self, player_id: str) -> int:
+        """Count how many wild-spawned cards the player has caught."""
+        all_cards = self.get_all_cards_sorted(player_id)
+        return sum(
+            1 for c in all_cards
+            if (c.get("caught_at") or c.get("obtained_by") == "catch")
+            and c.get("rarity") != "special"
+        )
 
     def has_card_name(self, player_id: str, name: str, card_type: str) -> bool:
         """Return True if the player already owns a card with this name and type."""

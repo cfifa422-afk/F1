@@ -136,20 +136,123 @@ def generate_team_asset(rarity: str) -> Dict:
 # ==================== RARITY DISPLAY ====================
 
 RARITY_EMOJIS = {
-    "mythic": "🔱",
+    "special":   "🌟",
+    "mythic":    "🔱",
     "legendary": "👑",
-    "epic": "💜",
-    "rare": "💙",
-    "common": "⚪",
+    "epic":      "💜",
+    "rare":      "💙",
+    "common":    "⚪",
 }
 
 RARITY_COLORS = {
-    "mythic": 0xFF4500,
+    "special":   0xF1C40F,
+    "mythic":    0xFF4500,
     "legendary": 0xFFD700,
-    "epic": 0x9B59B6,
-    "rare": 0x3498DB,
-    "common": 0x95A5A6,
+    "epic":      0x9B59B6,
+    "rare":      0x3498DB,
+    "common":    0x95A5A6,
 }
+
+# ==================== SPECIAL MILESTONE CARDS ====================
+# Awarded automatically when a player catches enough wild cards.
+
+SPECIAL_MILESTONE_CARDS = [
+    {
+        "threshold": 10,
+        "id": "sp_bronze_collector",
+        "name": "Bronze Collector",
+        "emoji": "🥉",
+        "code": "BRZ",
+        "skill": 0.0,
+        "team": "F1 Specials",
+        "rarity": "special",
+        "type": "driver",
+        "perks": [],
+        "obtained_by": "milestone",
+    },
+    {
+        "threshold": 50,
+        "id": "sp_silver_collector",
+        "name": "Silver Collector",
+        "emoji": "🥈",
+        "code": "SLV",
+        "skill": 0.0,
+        "team": "F1 Specials",
+        "rarity": "special",
+        "type": "driver",
+        "perks": [],
+        "obtained_by": "milestone",
+    },
+    {
+        "threshold": 100,
+        "id": "sp_gold_collector",
+        "name": "Gold Collector",
+        "emoji": "🥇",
+        "code": "GLD",
+        "skill": 0.0,
+        "team": "F1 Specials",
+        "rarity": "special",
+        "type": "driver",
+        "perks": [],
+        "obtained_by": "milestone",
+    },
+    {
+        "threshold": 250,
+        "id": "sp_platinum_collector",
+        "name": "Platinum Collector",
+        "emoji": "💎",
+        "code": "PLT",
+        "skill": 0.0,
+        "team": "F1 Specials",
+        "rarity": "special",
+        "type": "driver",
+        "perks": [],
+        "obtained_by": "milestone",
+    },
+]
+
+# GP special cards — awarded for completing specific career races
+GP_SPECIAL_CARDS = {
+    20: {"id": "sp_miami_gp",   "name": "Miami GP",   "emoji": "🏖️", "code": "MIA"},
+    22: {"id": "sp_monaco_gp",  "name": "Monaco GP",  "emoji": "🇲🇨", "code": "MCO"},
+    24: {"id": "sp_world_tour", "name": "World Tour", "emoji": "🏆",  "code": "WTC"},
+}
+
+def check_and_award_specials(player_id: str, db_instance) -> list:
+    """
+    Check if the player qualifies for any unclaimed milestone special cards.
+    Awards them and returns a list of newly-awarded card dicts.
+    Called after wild catches or pack opens.
+    """
+    from datetime import datetime as _dt
+
+    all_cards = db_instance.get_all_cards_sorted(player_id)
+
+    # Count total wild-caught cards (excluding specials themselves)
+    wild_count = sum(
+        1 for c in all_cards
+        if (c.get("caught_at") or c.get("obtained_by") == "catch")
+        and c.get("rarity") != "special"
+    )
+
+    # IDs of specials already owned
+    owned_special_ids = {
+        c.get("id", "").split("_")[0] + "_" + "_".join(c.get("id", "").split("_")[1:])
+        if "_" in c.get("id", "") else c.get("id", "")
+        for c in all_cards
+        if c.get("rarity") == "special"
+    }
+    owned_ids_raw = {c.get("id", "") for c in all_cards if c.get("rarity") == "special"}
+
+    awarded = []
+    for milestone in SPECIAL_MILESTONE_CARDS:
+        if wild_count >= milestone["threshold"] and milestone["id"] not in owned_ids_raw:
+            card = {k: v for k, v in milestone.items() if k != "threshold"}
+            card["obtained_at"] = _dt.now().isoformat()
+            db_instance.add_card_to_player(player_id, card, "driver")
+            awarded.append(card)
+
+    return awarded
 
 # ==================== CARD GENERATION ====================
 

@@ -508,6 +508,7 @@ class PackOpeningView(discord.ui.View):
         self.pack_type = pack_type
         self.index = 0
         for card in cards:
+            card["obtained_by"] = "pack"
             db.add_card_to_player(player_id, card, card["type"])
         self._refresh_button()
 
@@ -937,6 +938,7 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
             is_returning = db.player_exists(player_id)
             db.ensure_player(player_id, interaction.user.name)
             give_starter_cards(player_id, interaction.user.name)
+            self.card["obtained_by"] = "catch"
             db.add_card_to_player(player_id, self.card, self.card["type"])
 
             rarity_label = self.card["rarity"].upper()
@@ -962,6 +964,16 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
                 await interaction.followup.send(
                     f"🏆 {interaction.user.mention} You don't have a career yet! "
                     f"Use `/career` to sign up and race through 24 circuits to earn championship points and exclusive cards.",
+                    ephemeral=True,
+                )
+
+            # Check for newly unlocked milestone specials
+            awarded = card_module.check_and_award_specials(player_id, db)
+            for sp in awarded:
+                sp_emoji = sp.get("emoji", "🌟")
+                await interaction.followup.send(
+                    f"🌟 {interaction.user.mention} You unlocked a **Special Card**: "
+                    f"{sp_emoji} **{sp['name']}**!  Check it in `/collection`.",
                     ephemeral=True,
                 )
 
@@ -2264,12 +2276,14 @@ class MultiTradeView(discord.ui.View):
         for c in trade["target_cards"]:
             db.remove_card(target_id, c["id"])
 
-        # Add to new owners (strip timestamps)
+        # Add to new owners (strip timestamps, mark as trade)
         for c in trade["offerer_cards"]:
             copy = {k: v for k, v in c.items() if k not in ("obtained_at", "caught_at")}
+            copy["obtained_by"] = "trade"
             db.add_card_to_player(target_id, copy, c.get("type", "driver"))
         for c in trade["target_cards"]:
             copy = {k: v for k, v in c.items() if k not in ("obtained_at", "caught_at")}
+            copy["obtained_by"] = "trade"
             db.add_card_to_player(offerer_id, copy, c.get("type", "driver"))
 
         def _received_str(cards: List[Dict]) -> str:
@@ -4741,6 +4755,47 @@ async def career_slash(interaction: discord.Interaction):
     )
 
 
+class MatchesPaginatorView(discord.ui.View):
+    """4-page paginator for the /matches career schedule."""
+
+    def __init__(self, embeds: List[discord.Embed], player_id: str):
+        super().__init__(timeout=120)
+        self.embeds    = embeds
+        self.player_id = player_id
+        self.page      = 0
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        self.prev_btn.disabled = self.page == 0
+        self.next_btn.disabled = self.page >= len(self.embeds) - 1
+        self.page_btn.label    = f"Page {self.page + 1} / {len(self.embeds)}"
+
+    def current(self) -> discord.Embed:
+        return self.embeds[self.page]
+
+    @discord.ui.button(label="◀  Prev", style=discord.ButtonStyle.secondary, row=0)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if str(interaction.user.id) != self.player_id:
+            await interaction.response.send_message("This isn't your schedule!", ephemeral=True)
+            return
+        self.page -= 1
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=self.current(), view=self)
+
+    @discord.ui.button(label="Page 1 / 4", style=discord.ButtonStyle.secondary, disabled=True, row=0)
+    async def page_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Next  ▶", style=discord.ButtonStyle.secondary, row=0)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if str(interaction.user.id) != self.player_id:
+            await interaction.response.send_message("This isn't your schedule!", ephemeral=True)
+            return
+        self.page += 1
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=self.current(), view=self)
+
+
 @bot.tree.command(name="matches", description="View your F1 Career season schedule")
 async def matches_slash(interaction: discord.Interaction):
     player_id = str(interaction.user.id)
@@ -4750,7 +4805,10 @@ async def matches_slash(interaction: discord.Interaction):
     if not career:
         await interaction.followup.send("❌ You haven't started career mode yet. Use `/career` to sign up!")
         return
-    await interaction.followup.send(embed=career_mod.matches_embed(career))
+    pages = career_mod.build_matches_pages(career)
+    view  = MatchesPaginatorView(pages, player_id)
+    view._sync_buttons()
+    await interaction.followup.send(embed=pages[0], view=view)
 
 
 @bot.tree.command(name="career_match", description="Play your next F1 Career race")
@@ -4830,6 +4888,33 @@ async def career_match_slash(interaction: discord.Interaction):
 
     # Save to DB
     db.record_career_match(player_id, result)
+
+    # Award GP special card if this match has one
+    completed_match = result.get("match_num", match_num)
+    if completed_match in card_module.GP_SPECIAL_CARDS:
+        gp_spec = card_module.GP_SPECIAL_CARDS[completed_match]
+        sp_id   = f"{gp_spec['id']}_{player_id}"
+        existing = [c for c in db.get_special_cards(player_id) if c.get("id", "").startswith(gp_spec["id"])]
+        if not existing:
+            from datetime import datetime as _dt
+            gp_card = {
+                "id":          sp_id,
+                "name":        gp_spec["name"],
+                "emoji":       gp_spec["emoji"],
+                "code":        gp_spec["code"],
+                "skill":       0.0,
+                "team":        "F1 Career",
+                "rarity":      "special",
+                "type":        "driver",
+                "perks":       [],
+                "obtained_by": "career",
+                "obtained_at": _dt.now().isoformat(),
+            }
+            db.add_card_to_player(player_id, gp_card, "driver")
+            await interaction.channel.send(
+                f"🌟 {interaction.user.mention} earned a **Special Card**: "
+                f"{gp_spec['emoji']} **{gp_spec['name']}** for completing this race!"
+            )
 
     # Show result embed
     await msg_obj.edit(
@@ -4921,6 +5006,123 @@ async def career_rewards_slash(interaction: discord.Interaction):
         lines.append(f"📦  **Pack value:** +{extra:,} coins (use to open packs)")
 
     await interaction.followup.send("\n".join(lines))
+
+
+# ==================== /collection COMMAND ====================
+
+@bot.tree.command(name="collection", description="View your card collection summary, stats, and special cards")
+@discord.app_commands.describe(user="Another player to view (leave blank for your own)")
+async def collection_slash(interaction: discord.Interaction, user: Optional[discord.Member] = None):
+    target      = user if (user and user.id != interaction.user.id) else interaction.user
+    target_id   = str(target.id)
+    is_own      = target.id == interaction.user.id
+
+    await interaction.response.defer(ephemeral=False)
+
+    if not db.player_exists(target_id):
+        await interaction.followup.send(
+            f"{'You haven' if is_own else f'{target.display_name} hasn'}t started playing yet.",
+            ephemeral=True,
+        )
+        return
+
+    all_cards = db.get_all_cards_sorted(target_id)
+    if not all_cards:
+        await interaction.followup.send(
+            "No cards in this collection yet!", ephemeral=True
+        )
+        return
+
+    # ── Source breakdown ──────────────────────────────────────────────────
+    caught  = 0
+    traded  = 0
+    packed  = 0
+    specials_list: List[Dict] = []
+
+    for c in all_cards:
+        if c.get("rarity") == "special":
+            specials_list.append(c)
+            continue
+        src = c.get("obtained_by", "")
+        if src == "catch" or c.get("caught_at"):
+            caught += 1
+        elif src == "trade":
+            traded += 1
+        else:
+            packed += 1
+
+    total_non_special = caught + traded + packed
+    total_all         = len(all_cards)
+
+    # ── Rarity breakdown ─────────────────────────────────────────────────
+    from collections import Counter
+    rarity_counts = Counter(
+        c.get("rarity", "common")
+        for c in all_cards
+        if c.get("rarity") != "special"
+    )
+    rarity_order  = ["mythic", "legendary", "epic", "rare", "common"]
+    rarity_lines  = []
+    for r in rarity_order:
+        count = rarity_counts.get(r, 0)
+        if count:
+            emoji = card_module.RARITY_EMOJIS.get(r, "")
+            rarity_lines.append(f"{emoji} **{r.title()}**: {count}")
+
+    # ── Special cards ─────────────────────────────────────────────────────
+    sp_lines: List[str] = []
+    from collections import Counter as _Counter
+    sp_name_counts = _Counter(c.get("name", "?") for c in specials_list)
+    for name, cnt in sp_name_counts.items():
+        matching = next((c for c in specials_list if c.get("name") == name), {})
+        sp_emoji = matching.get("emoji") or card_module.RARITY_EMOJIS.get("special", "🌟")
+        sp_lines.append(f"{sp_emoji} {name}: {cnt}")
+
+    # ── Build embed ───────────────────────────────────────────────────────
+    e = discord.Embed(
+        title=f"Collection of {target.display_name}",
+        color=0xF1C40F if specials_list else 0x2d3436,
+    )
+    e.set_thumbnail(url=target.display_avatar.url)
+
+    e.add_field(
+        name="📦  Overview",
+        value=(
+            f"**Total:** {total_all} "
+            f"({caught} caught, {traded} received from trade, {packed} packed)\n"
+            f"**Total Specials:** {len(specials_list)}"
+        ),
+        inline=False,
+    )
+
+    if rarity_lines:
+        e.add_field(
+            name="✨  Rarity Breakdown",
+            value="\n".join(rarity_lines),
+            inline=True,
+        )
+
+    if sp_lines:
+        e.add_field(
+            name="🌟  Specials",
+            value="\n".join(sp_lines),
+            inline=True,
+        )
+    elif is_own:
+        e.add_field(
+            name="🌟  Specials",
+            value=(
+                "*No special cards yet.*\n"
+                "Catch wild cards to earn milestone specials,\n"
+                "or complete career races for GP cards!"
+            ),
+            inline=True,
+        )
+
+    coins = db.get_coins(target_id)
+    e.set_footer(text=f"💰 {coins:,} coins  ·  Use /f1 collection to browse individual cards")
+
+    await interaction.followup.send(embed=e)
 
 
 if __name__ == "__main__":

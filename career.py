@@ -466,13 +466,35 @@ def career_status_embed(career: Dict, username: str) -> discord.Embed:
     return discord.Embed(title=title, description=desc, color=color)
 
 def matches_embed(career: Dict) -> discord.Embed:
-    done    = career.get("matches_completed", 0)
+    """Legacy single-embed fallback — use build_matches_pages() for paginated display."""
+    pages = build_matches_pages(career)
+    return pages[0]
+
+
+def build_matches_pages(career: Dict) -> List[discord.Embed]:
+    """
+    Returns a list of 4 clean embeds for the paginated /matches command.
+      Page 1 — Career overview (stats, car/driver, next race)
+      Page 2 — Races 1–8
+      Page 3 — Races 9–16
+      Page 4 — Races 17–24
+    """
+    done      = career.get("matches_completed", 0)
     pts_total = career.get("championship_points", 0)
-    results = {r["match_num"]: r for r in career.get("match_results", [])}
-    from datetime import datetime
-    today   = datetime.now().date().isoformat()
-    used    = career.get("daily_used", 0) if career.get("daily_reset_date") == today else 0
-    lines   = []
+    results   = {r["match_num"]: r for r in career.get("match_results", [])}
+    car_s     = career.get("car_snapshot", {})
+    drv_s     = career.get("driver_snapshot", {})
+    status    = career.get("status", "active")
+
+    from datetime import datetime as _dt
+    today = _dt.now().date().isoformat()
+    used  = career.get("daily_used", 0) if career.get("daily_reset_date") == today else 0
+
+    color = 0x00b894 if status == "active" else 0xf9ca24
+    footer = "🟢 Ready  ·  ✅ Done  ·  🔒 Locked  ·  ⏰ On cooldown  |  /career_match to race"
+
+    # ── Build per-race lines (shared across pages 2–4) ─────────────────────
+    lines: List[str] = []
     for t in CAREER_TRACKS:
         n    = t["num"]
         diff = t["difficulty"]
@@ -485,39 +507,87 @@ def matches_embed(career: Dict) -> discord.Embed:
             lines.append(f"✅  **R{n}** {t['flag']} {t['name']}  —  {pe} · **{pts} pts**")
         elif n == done + 1:
             if used < DAILY_LIMIT:
-                lines.append(f"🟢  **R{n}** {t['flag']} {t['name']}  —  {meta['emoji']} {meta['label']}  ◄ **NEXT**")
+                lines.append(
+                    f"🟢  **R{n}** {t['flag']} {t['name']}  —  "
+                    f"{meta['emoji']} {meta['label']}  ◄ **NEXT**"
+                )
             else:
-                ts        = next_unlock_timestamp(career)
+                ts         = next_unlock_timestamp(career)
                 unlock_str = f"<t:{ts}:R>" if ts else "soon"
-                lines.append(f"⏰  **R{n}** {t['flag']} {t['name']}  —  unlocks {unlock_str}")
+                lines.append(
+                    f"⏰  **R{n}** {t['flag']} {t['name']}  —  unlocks {unlock_str}"
+                )
         else:
-            lines.append(f"🔒  **R{n}** {t['flag']} {t['name']}  —  {meta['emoji']} {meta['label']}")
+            lines.append(
+                f"🔒  **R{n}** {t['flag']} {t['name']}  —  {meta['emoji']} {meta['label']}"
+            )
 
-    chunk_size = 8
-    chunks = [lines[i:i + chunk_size] for i in range(0, len(lines), chunk_size)]
-    labels = ["Races 1–8", "Races 9–16", "Races 17–24"]
+    # ── Page 1 — Overview ───────────────────────────────────────────────────
+    pct   = int((done / TOTAL_MATCHES) * 10)
+    bar   = "█" * pct + "░" * (10 - pct)
 
-    status = career.get("status", "active")
-    color  = 0x00b894 if status == "active" else 0xf9ca24
+    next_race_val = "—"
+    if done < TOTAL_MATCHES:
+        nxt  = CAREER_TRACKS[done]
+        meta = DIFF_META[nxt["difficulty"]]
+        next_race_val = (
+            f"{nxt['flag']} **{nxt['name']}**  ·  {meta['emoji']} {meta['label']}\n"
+            f"*{nxt['circuit']}*"
+        )
 
-    e = discord.Embed(
-        title=f"📅  F1 Career — Season Schedule",
+    daily_remaining = max(0, DAILY_LIMIT - used)
+    cooldown_note   = ""
+    if used >= DAILY_LIMIT and done < TOTAL_MATCHES:
+        ts = next_unlock_timestamp(career)
+        cooldown_note = f"\n⏰ Next match unlocks <t:{ts}:R>" if ts else "\n⏰ Cooldown active"
+
+    p1 = discord.Embed(
+        title="📅  F1 Career — Season Overview",
         color=color,
     )
-    e.add_field(
-        name="📊  Season Progress",
+    p1.add_field(
+        name="📊  Championship Progress",
         value=(
-            f"**Races completed:** {done} / {TOTAL_MATCHES}\n"
-            f"**Championship Points:** {pts_total} pts\n"
-            f"**Today's matches:** {used} / {DAILY_LIMIT} used"
+            f"`{bar}`  **{done} / {TOTAL_MATCHES}** races\n"
+            f"🏆 **{pts_total} pts**  earned this season\n"
+            f"🎮 **{daily_remaining} / {DAILY_LIMIT}** matches available today"
+            f"{cooldown_note}"
         ),
         inline=False,
     )
-    for i, chunk in enumerate(chunks):
-        label = labels[i] if i < len(labels) else f"Races {i*8+1}–{i*8+8}"
-        e.add_field(name=label, value="\n".join(chunk), inline=False)
-    e.set_footer(text="🟢 Ready  ·  ✅ Done  ·  🔒 Locked  ·  ⏰ On cooldown  |  Use /career_match to race")
-    return e
+    p1.add_field(
+        name="🏎️  Career Loadout",
+        value=(
+            f"**Car:** {car_s.get('name', '—')}  ·  {car_s.get('top_speed', '?')} km/h\n"
+            f"**Driver:** {drv_s.get('name', '—')}  ·  Skill {drv_s.get('skill', '?')}/10"
+        ),
+        inline=True,
+    )
+    p1.add_field(
+        name="🗺️  Next Race",
+        value=next_race_val,
+        inline=True,
+    )
+    if status == "completed":
+        p1.add_field(
+            name="🏁  Season Complete!",
+            value="Use `/career_standings` to see final standings\nand `/career_rewards` to claim your prize.",
+            inline=False,
+        )
+    p1.set_footer(text=f"Page 1 / 4  ·  {footer}")
+
+    # ── Pages 2–4 — Race lists ──────────────────────────────────────────────
+    def _race_page(chunk: List[str], label: str, page_num: int) -> discord.Embed:
+        e = discord.Embed(title=f"📅  F1 Career — {label}", color=color)
+        e.description = "\n".join(chunk)
+        e.set_footer(text=f"Page {page_num} / 4  ·  {footer}")
+        return e
+
+    p2 = _race_page(lines[0:8],   "Races 1–8",   2)
+    p3 = _race_page(lines[8:16],  "Races 9–16",  3)
+    p4 = _race_page(lines[16:24], "Races 17–24", 4)
+
+    return [p1, p2, p3, p4]
 
 # ═══════════════════════════════════════════════════════════
 #  CAREER RACE — SCENARIOS & REACTION SYSTEM
