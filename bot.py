@@ -1064,6 +1064,8 @@ async def daily_promo_dm():
         try:
             user = await bot.fetch_user(int(pid))
             await user.send(
+                "🏎️ **F1 Card Bot** — your cards are waiting! "
+                "Use `/race` to challenge someone or `/daily` to claim your pack. GL HF! 🏁"
             )
             db.set_promo_dm_sent(pid)
             sent += 1

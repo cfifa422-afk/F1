@@ -101,7 +101,7 @@ RACE_GIFS = [
 ]
 
 # ── Replace this URL with your own race GIF ──────────────────────
-CAREER_RACE_GIF = "https://media.giphy.com/media/3ohzdIuqJoo8QdKlnW/giphy.gif"
+CAREER_RACE_GIF = "https://gifdb.com/images/thumbnail/f1-formula1-gif-qm0m61l3z6ydteoo.gif"
 
 CAREER_LAPS   = 3
 CAREER_TURNS  = 12

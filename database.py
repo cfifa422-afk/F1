@@ -189,6 +189,65 @@ class Database:
             return {s: 0 for s in UPGRADE_STATS}
         return player.setdefault("upgrades", {s: 0 for s in UPGRADE_STATS})
 
+    def get_upgrade_multipliers(self, player_id: str) -> Dict:
+        """
+        Convert raw upgrade levels (0-5) into float multipliers.
+        Values > 1.0 improve the stat. Brakes < 1.0 reduces tyre wear rate.
+        """
+        upgrades = self.get_upgrades(player_id)
+        return {
+            "engine":       1.0 + upgrades.get("engine",       0) * 0.03,
+            "acceleration": 1.0 + upgrades.get("acceleration", 0) * 0.025,
+            "aero":         1.0 + upgrades.get("aero",         0) * 0.025,
+            "suspension":   1.0 + upgrades.get("suspension",   0) * 0.02,
+            "brakes":       1.0 - upgrades.get("brakes",       0) * 0.04,
+        }
+
+    def should_send_promo_dm(self, player_id: str) -> bool:
+        player = self.get_player(player_id)
+        if not player:
+            return False
+        last = player.get("last_promo_dm_at")
+        if not last:
+            return True
+        try:
+            return (datetime.now() - datetime.fromisoformat(last)).total_seconds() >= 7 * 24 * 3600
+        except Exception:
+            return False
+
+    def set_promo_dm_sent(self, player_id: str):
+        player = self.get_player(player_id)
+        if player:
+            player["last_promo_dm_at"] = datetime.now().isoformat()
+            self._save_data()
+
+    def get_team_bonuses(self, player_id: str) -> Dict:
+        """
+        Sum bonus values from all equipped team asset cards.
+        Returns a dict keyed by effect (aero, acceleration, tire_wear,
+        fuel_efficiency, pit_time), values are total bonus floats.
+        """
+        defaults = {
+            "aero": 0.0, "acceleration": 0.0,
+            "tire_wear": 0.0, "fuel_efficiency": 0.0, "pit_time": 0.0,
+        }
+        player = self.get_player(player_id)
+        if not player:
+            return defaults
+
+        equipped_ids = player.get("equipped", {}).get("team_assets", [])
+        if not equipped_ids:
+            return defaults
+
+        all_assets = player.get("cards", {}).get("team_assets", [])
+        bonuses = dict(defaults)
+        for asset in all_assets:
+            if asset.get("id") in equipped_ids:
+                effect = asset.get("effect", "")
+                if effect in bonuses:
+                    bonuses[effect] += float(asset.get("bonus", 0.0))
+        return bonuses
+
     def upgrade_stat(self, player_id: str, stat: str):
         if stat not in UPGRADE_STATS:
             return False, "Unknown upgrade stat."
