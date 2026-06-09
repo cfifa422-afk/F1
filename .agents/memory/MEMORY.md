@@ -1,0 +1,2 @@
+- [Bot architecture](bot-architecture.md) — single-file bot (bot.py), no Cog system, all commands via @bot.tree.command and app_commands.Group
+- [BallsDex revamp features](ballsdex-revamp.md) — full list of ported features and where they live in the codebase
