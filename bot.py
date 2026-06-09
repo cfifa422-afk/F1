@@ -276,8 +276,8 @@ active_race_pairs: Dict = {}
 
 pack_group = app_commands.Group(name="pack", description="Open your F1 card packs")
 f1_group = app_commands.Group(name="f1", description="F1 card collection commands")
-config_group = app_commands.Group(name="config", description="Server configuration (admin only)")
-channels_group = app_commands.Group(name="channels", description="Manage card spawn channels", parent=config_group)
+config_group   = app_commands.Group(name="config",   description="Server configuration (admin only)")
+channels_group = app_commands.Group(name="channels", description="Manage card spawn channels")
 
 # ==================== HELPER FUNCTIONS ====================
 
@@ -957,23 +957,41 @@ class CatchModal(discord.ui.Modal, title="Catch the Card!"):
             self.card["obtained_by"] = "catch"
             db.add_card_to_player(player_id, self.card, self.card["type"])
 
-            rarity_label = self.card["rarity"].upper()
+            rarity = self.card["rarity"]
+            rarity_label = rarity.upper()
+            rarity_emoji = card_module.RARITY_EMOJIS.get(rarity, "")
+            color = card_module.RARITY_COLORS.get(rarity, 0x3498DB)
             display = (
                 f"{self.card['name']} ({self.card['code']})"
                 if self.card["type"] == "driver"
                 else self.card["name"]
             )
-            card_display_id = f"#{self.card.get('id', '?').upper()}"
+            card_display_id = self.card.get("id", "?").upper()
             await interaction.response.edit_message(view=self.spawn_view)
+
             if self.card["type"] == "car":
-                extra = "🔧 You caught a mechanic card! Use `/team` to equip it to your team."
+                tip = "🔧 Equip it for racing with `/f1 equip`."
+                type_line = "🏎️  Car Card"
+            elif self.card["type"] == "team_asset":
+                tip = "🏗️ Check it in `/f1 collection`."
+                type_line = "🏗️  Team Asset"
             else:
-                extra = "Added to your collection. Use `/f1 equip` to race with it."
-            returning_note = "\n🏅 Welcome back, veteran racer!" if is_returning else "\n👋 Welcome to F1 Racing! Use `/garage` to see your collection."
-            await interaction.followup.send(
-                f"{interaction.user.mention} You caught **{display}**! ``({card_display_id},  {rarity_label})``\n"
-                f"{extra}{returning_note}"
+                tip = "🏎️ Equip them with `/f1 equip` and race!"
+                type_line = "👤  Driver Card"
+
+            new_player_hint = "" if is_returning else "\n\n👋 **Welcome!** Use `/f1 equip` to set up your race deck."
+
+            catch_embed = discord.Embed(
+                title=f"{rarity_emoji}  New card caught!",
+                description=(
+                    f"**{interaction.user.display_name}** caught **{display}**!\n\n"
+                    f"{type_line}  ·  **{rarity_label}**  ·  `#{card_display_id}`\n"
+                    f"{tip}{new_player_hint}"
+                ),
+                color=color,
             )
+            catch_embed.set_footer(text="Use /f1 collection to view your cards · /completion to track progress")
+            await interaction.followup.send(embed=catch_embed)
 
             # Prompt players who haven't joined career mode yet
             if not db.get_career(player_id):
@@ -1073,10 +1091,19 @@ async def spawn_wild_card():
             spawn_file = f1_images.get_spawn_file(card)
             spawn_embed = build_spawn_embed(card, image_filename=spawn_file.filename if spawn_file else None)
             view = SpawnView(card)
+            rarity_announce = {
+                "common":    "🏎️  A wild F1 card appeared in the pit lane!",
+                "rare":      "💙  A **Rare** F1 card just pulled into the pits!",
+                "epic":      "💜  An **Epic** F1 card has entered the race!",
+                "legendary": "👑  A **LEGENDARY** F1 card arrived on the grid! 🚨",
+                "mythic":    "🌟  A **MYTHIC** icon of the sport appeared! 🚨🚨",
+                "special":   "⚠️  An ultra-rare **SPECIAL** card just spawned! 🚨🚨🚨",
+            }
+            announce_text = rarity_announce.get(card.get("rarity", "common"), "🏎️  A wild F1 card appeared!")
             if spawn_file:
-                msg = await channel.send(content=None, embed=spawn_embed, view=view, file=spawn_file)
+                msg = await channel.send(content=announce_text, embed=spawn_embed, view=view, file=spawn_file)
             else:
-                msg = await channel.send(content=None, embed=spawn_embed, view=view)
+                msg = await channel.send(content=announce_text, embed=spawn_embed, view=view)
             view.message = msg
             _guild_last_spawn[gid] = now
             print(f"🃏 Spawned {card['rarity']} {card['name']} in #{channel.name} ({guild.name}) [active — {SPAWN_INTERVAL//60}min interval]")
@@ -1137,6 +1164,7 @@ def _is_admin(interaction: discord.Interaction) -> bool:
 
 
 @channels_group.command(name="add", description="Add a channel where F1 cards will spawn")
+@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel="The channel to add")
 async def config_channels_add(interaction: discord.Interaction, channel: discord.TextChannel):
     if not _is_admin(interaction):
@@ -1165,6 +1193,7 @@ async def config_channels_add(interaction: discord.Interaction, channel: discord
 
 
 @channels_group.command(name="remove", description="Remove a card spawn channel")
+@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(channel="The channel to remove")
 async def config_channels_remove(interaction: discord.Interaction, channel: discord.TextChannel):
     if not _is_admin(interaction):
@@ -1188,13 +1217,14 @@ async def config_channels_remove(interaction: discord.Interaction, channel: disc
 
 
 @channels_group.command(name="list", description="List all configured card spawn channels")
+@app_commands.default_permissions(manage_guild=True)
 async def config_channels_list(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
     channel_ids = db.get_spawn_channels(guild_id)
     if not channel_ids:
         embed = discord.Embed(
             title="📋 Spawn Channels",
-            description="No spawn channels configured yet.\nUse `/config channels add #channel` to set one up.",
+            description="No spawn channels configured yet.\nUse `/channels add #channel` to set one up.",
             color=0x95A5A6,
         )
     else:
@@ -1523,6 +1553,20 @@ def build_profile_embeds(player_id: str, display_name: str) -> List[discord.Embe
     except Exception:
         joined = "Unknown"
 
+    # Collection completion %
+    all_possible = card_module.ALL_CARDS if hasattr(card_module, "ALL_CARDS") else (
+        list(card_module.DRIVER_POOL) + list(card_module.CAR_POOL)
+    )
+    total_possible = len(all_possible)
+    owned_names = {c["name"] for cat in cards.values() for c in cat}
+    owned_count = sum(1 for c in all_possible if c.get("name") in owned_names)
+    completion_pct = (owned_count / total_possible * 100) if total_possible else 0.0
+    comp_bar_len = 12
+    comp_filled = int(comp_bar_len * completion_pct / 100)
+    comp_bar = "█" * comp_filled + "░" * (comp_bar_len - comp_filled)
+
+    friends_list = db.get_friends(player_id)
+
     # Embed 1 — Main profile
     e1 = discord.Embed(title=f"{rank_emoji}  {display_name}", color=0x00FF88)
     e1.add_field(
@@ -1530,7 +1574,8 @@ def build_profile_embeds(player_id: str, display_name: str) -> List[discord.Embe
         value=(
             f"🥇 Wins: **{wins}**\n"
             f"🥈 Losses: **{losses}**\n"
-            f"⚠️ DNF: **{dnf}**"
+            f"⚠️ DNF: **{dnf}**\n"
+            f"📈 Win Rate: **{win_rate:.1f}%**"
         ),
         inline=True,
     )
@@ -1545,11 +1590,16 @@ def build_profile_embeds(player_id: str, display_name: str) -> List[discord.Embe
         inline=True,
     )
     e1.add_field(
-        name="📊 Statistics",
-        value=f"📊 Total Races: **{total}**\n📈 Win Rate: **{win_rate:.1f}%**",
+        name="📊 Stats",
+        value=f"Total Races: **{total}**  ·  Friends: **{len(friends_list)}**",
         inline=False,
     )
-    e1.set_footer(text=f"Joined: {joined}")
+    e1.add_field(
+        name=f"🏁 Completion `[{comp_bar}]`",
+        value=f"**{owned_count}/{total_possible}** cards collected  ({completion_pct:.1f}%)",
+        inline=False,
+    )
+    e1.set_footer(text=f"Joined: {joined}  ·  Use /completion for full breakdown")
 
     # Embed 2 — Collection
     e2 = discord.Embed(title="🎴 Collection", color=0x64C8FF)
@@ -2436,6 +2486,7 @@ async def f1_trade(interaction: discord.Interaction, player: discord.Member):
 bot.tree.add_command(pack_group)
 bot.tree.add_command(f1_group)
 bot.tree.add_command(config_group)
+bot.tree.add_command(channels_group)
 
 
 # ==================== AUTO-SIMULATION RACE SYSTEM ====================
@@ -5316,6 +5367,7 @@ async def collection_slash(interaction: discord.Interaction, user: Optional[disc
 # ==================== CONFIG: STATUS / ENABLE / DISABLE / BLACKLIST ====================
 
 @config_group.command(name="status", description="Show this server's current bot configuration")
+@app_commands.default_permissions(manage_guild=True)
 async def config_status(interaction: discord.Interaction):
     if not _is_admin(interaction):
         await interaction.response.send_message("❌ You need **Manage Server** permission.", ephemeral=True)
@@ -5355,6 +5407,7 @@ async def config_status(interaction: discord.Interaction):
 
 
 @config_group.command(name="enable", description="Enable wild card spawning in this server")
+@app_commands.default_permissions(manage_guild=True)
 async def config_enable(interaction: discord.Interaction):
     if not _is_admin(interaction):
         await interaction.response.send_message("❌ You need **Manage Server** permission.", ephemeral=True)
@@ -5373,6 +5426,7 @@ async def config_enable(interaction: discord.Interaction):
 
 
 @config_group.command(name="disable", description="Disable wild card spawning in this server")
+@app_commands.default_permissions(manage_guild=True)
 async def config_disable(interaction: discord.Interaction):
     if not _is_admin(interaction):
         await interaction.response.send_message("❌ You need **Manage Server** permission.", ephemeral=True)
@@ -5388,12 +5442,12 @@ async def config_disable(interaction: discord.Interaction):
 
 
 blacklist_group = app_commands.Group(
-    name="blacklist", description="Manage the server blacklist (admin only)",
-    parent=config_group,
+    name="blacklist", description="Manage the server blacklist — admin only",
 )
 
 
 @blacklist_group.command(name="add", description="Blacklist a user from catching cards in this server")
+@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(user="User to blacklist")
 async def blacklist_add(interaction: discord.Interaction, user: discord.Member):
     if not _is_admin(interaction):
@@ -5409,6 +5463,7 @@ async def blacklist_add(interaction: discord.Interaction, user: discord.Member):
 
 
 @blacklist_group.command(name="remove", description="Remove a user from the server blacklist")
+@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(user="User to unblacklist")
 async def blacklist_remove(interaction: discord.Interaction, user: discord.Member):
     if not _is_admin(interaction):
@@ -5423,6 +5478,7 @@ async def blacklist_remove(interaction: discord.Interaction, user: discord.Membe
 
 
 @blacklist_group.command(name="list", description="Show all blacklisted users in this server")
+@app_commands.default_permissions(manage_guild=True)
 async def blacklist_list(interaction: discord.Interaction):
     if not _is_admin(interaction):
         await interaction.response.send_message("❌ Admin only.", ephemeral=True)
@@ -6320,6 +6376,7 @@ async def block_list(interaction: discord.Interaction):
 
 bot.tree.add_command(trade_group)
 bot.tree.add_command(player_group)
+bot.tree.add_command(blacklist_group)
 
 
 if __name__ == "__main__":
