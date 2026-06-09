@@ -100,6 +100,9 @@ RACE_GIFS = [
     "https://media.giphy.com/media/xT1Ra5h24Eliux3UVq/giphy.gif",
 ]
 
+# ── Replace this URL with your own race GIF ──────────────────────
+CAREER_RACE_GIF = "https://media.giphy.com/media/3ohzdIuqJoo8QdKlnW/giphy.gif"
+
 CAREER_LAPS   = 3
 CAREER_TURNS  = 12
 
@@ -857,25 +860,77 @@ async def run_career_race(
         if pos <= 8:   return 0xfdcb6e   # amber  — points
         return 0xe17055                   # red    — out of points
 
-    def _gap_to_leader() -> str:
-        avg_npc = sum(npc_times) / max(len(npc_times), 1)
-        diff    = player_total_time - avg_npc
-        if diff < -1.0:  return f"📈 **+{abs(diff):.2f}s** ahead of field"
-        if diff >  1.0:  return f"📉 **+{diff:.2f}s** behind field"
-        return "📡 **Locked in** — right with the field"
+    def _fmt_gap(seconds: float) -> str:
+        """Format a gap like real F1 timing — tenths/hundredths for tight gaps, lapped if huge."""
+        if seconds < 0:
+            return "LEADER"
+        if seconds > 90:
+            return "✖ LAPPED"
+        if seconds < 10:
+            return f"+{seconds:.3f}s"
+        return f"+{seconds:.2f}s"
+
+    def _live_timing_board() -> str:
+        """F1-style timing tower — sorted by accumulated time, player highlighted."""
+        field: List[Dict] = []
+        for i, npc in enumerate(npcs):
+            field.append({"name": npc["name"], "team": npc["team"], "time": npc_times[i], "is_player": False})
+        field.append({"name": user.display_name, "team": "YOU", "time": player_total_time, "is_player": True})
+        field.sort(key=lambda x: x["time"])
+
+        leader_time = field[0]["time"]
+        player_pos  = next((i + 1 for i, c in enumerate(field) if c["is_player"]), len(field))
+
+        pos_icons = {1: "🥇", 2: "🥈", 3: "🥉"}
+
+        # Determine which rows to show: always P1-P3, then player ± 2 context rows
+        show_indices: List[int] = list(range(min(3, len(field))))  # P1–P3 (0-indexed)
+        p_idx = player_pos - 1
+        for offset in [-2, -1, 0, 1, 2]:
+            idx = p_idx + offset
+            if 3 <= idx < len(field):
+                show_indices.append(idx)
+        show_indices = sorted(set(show_indices))
+
+        lines: List[str] = []
+        prev_idx = -1
+        for idx in show_indices:
+            # Insert gap-row when there's a skip in positions
+            if prev_idx != -1 and idx > prev_idx + 1:
+                lines.append("` ·   ···················· `")
+            prev_idx = idx
+
+            car    = field[idx]
+            pos    = idx + 1
+            icon   = pos_icons.get(pos, f"P{pos:02d}")
+            gap    = _fmt_gap(car["time"] - leader_time)
+            name   = car["name"][:13].ljust(13)
+            if car["is_player"]:
+                lines.append(f"`{icon}` **{name}** ◄  `{gap}`")
+            else:
+                lines.append(f"`{icon}` {name}  `{gap}`")
+
+        return "\n".join(lines)
 
     def _build_race_embed(turn_num: int, choice_made: Optional[str] = None) -> discord.Embed:
-        lap       = min(((turn_num - 1) // 4) + 1, 3)
-        npc_avg   = sum(npc_times) / max(len(npc_times), 1)
-        gap_diff  = player_total_time - npc_avg
+        lap = min(((turn_num - 1) // 4) + 1, 3)
 
-        # Estimate rough position for color
-        beats     = sum(1 for t in npc_times if player_total_time <= t)
-        est_pos   = max(1, len(npcs) + 1 - beats)
-        color     = _pos_color(est_pos)
+        # Compute actual player position
+        all_times   = npc_times + [player_total_time]
+        sorted_times = sorted(all_times)
+        est_pos      = sorted_times.index(player_total_time) + 1
+        total_cars   = len(all_times)
+        color        = _pos_color(est_pos)
 
-        # Last 3 commentary lines — reversed so newest is first
-        cmt_block = "\n".join(commentary_lines[-3:]) if commentary_lines else "*Race underway…*"
+        # Gap to leader (first car)
+        leader_time = min(all_times)
+        gap_to_lead = player_total_time - leader_time
+        if gap_to_lead <= 0:
+            pos_line = f"🏆 **P{est_pos} / {total_cars}**  —  **LEADER**"
+        elif gap_to_lead > 90:
+            pos_line = f"⚠️ **P{est_pos} / {total_cars}**  —  `✖ LAPPED`"
+        else:
+            pos_line = f"📍 **P{est_pos} / {total_cars}**  —  `{_fmt_gap(gap_to_lead)}` from leader"
 
         w_icon = "🌧️ Rain" if weather == "rain" else "☀️ Clear"
         choice_label = {
@@ -883,23 +938,29 @@ async def run_career_race(
             "same_speed": "➡️ Maintained",
             "slow_down":  "🛑 Lifted Off",
             "pit_stop":   "🔧 Pit Stop",
-        }.get(choice_made, "")
+        }.get(choice_made or "", "")
+
+        # Last 2 commentary lines
+        cmt_block = "\n".join(commentary_lines[-2:]) if commentary_lines else "*Race underway…*"
 
         e = discord.Embed(
             title=f"🏎️  {track['flag']} {track['name']}",
             color=color,
         )
         e.description = (
-            f"**Lap {lap} / 3  ·  Turn {turn_num} / {CAREER_TURNS}**\n\n"
-            f"{_fuel_bar(fuel)}  ·  {_tyre_bar(tire_wear)}  ·  {w_icon}\n"
-            f"{_gap_to_leader()}\n\n"
+            f"**Lap {lap} / 3  ·  Turn {turn_num} / {CAREER_TURNS}**  ·  {w_icon}\n"
+            f"{_fuel_bar(fuel)}  ·  {_tyre_bar(tire_wear)}\n"
+            f"{pos_line}\n\n"
+            f"**📊 LIVE TIMING**\n"
+            f"{_live_timing_board()}\n\n"
             f"{'─' * 30}\n"
             f"{cmt_block}"
         )
-        footer_parts = [f"Match {match_num}/{TOTAL_MATCHES}"]
+        footer_parts = [f"Match {match_num} / {TOTAL_MATCHES}"]
         if choice_label:
             footer_parts.append(choice_label)
         e.set_footer(text="  ·  ".join(footer_parts))
+        e.set_thumbnail(url=CAREER_RACE_GIF)
         return e
 
     try:
