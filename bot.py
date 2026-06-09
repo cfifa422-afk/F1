@@ -3290,6 +3290,161 @@ async def show_deck(ctx):
     await ctx.send(embed=embed)
 
 
+# ==================== OWNER-ONLY PREFIX COMMANDS ====================
+
+@bot.command(name="dms")
+async def send_dms(ctx):
+    """Manually blast promo DMs to all registered players. Bot owner only."""
+    if not await bot.is_owner(ctx.author):
+        await ctx.send("❌ Owner only.", delete_after=5)
+        return
+
+    await ctx.send("📨 Sending promo DMs to all players… this may take a moment.")
+    player_ids = db.get_all_player_ids()
+    sent = 0
+    failed = 0
+
+    for pid in player_ids:
+        try:
+            user = await bot.fetch_user(int(pid))
+            await user.send(
+                "🏎️ **F1 Card Bot** — your cards are waiting! "
+                "Use `/race` to challenge someone or `/pack daily` to claim your pack. GL HF! 🏁"
+            )
+            db.set_promo_dm_sent(pid)
+            sent += 1
+            await asyncio.sleep(1)
+        except discord.Forbidden:
+            db.set_promo_dm_sent(pid)
+            failed += 1
+        except discord.NotFound:
+            failed += 1
+        except Exception as e:
+            failed += 1
+            print(f"⚠️ DM failed for {pid}: {e}")
+
+    await ctx.send(f"✅ Done — **{sent}** DMs sent, **{failed}** failed/blocked.")
+
+
+class Spawn24Modal(discord.ui.Modal, title="Force-Spawn a Card"):
+    card_name = discord.ui.TextInput(
+        label="Card name (exact or driver code)",
+        placeholder="e.g. Max Verstappen   or   MCL60",
+        style=discord.TextStyle.short,
+        max_length=80,
+    )
+    server_id = discord.ui.TextInput(
+        label="Server (Guild) ID",
+        placeholder="Right-click the server → Copy Server ID",
+        style=discord.TextStyle.short,
+        max_length=25,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        # ── Resolve guild ──────────────────────────────────────────────
+        try:
+            gid = int(self.server_id.value.strip())
+        except ValueError:
+            await interaction.followup.send("❌ Server ID must be a number.", ephemeral=True)
+            return
+
+        guild = bot.get_guild(gid)
+        if guild is None:
+            await interaction.followup.send(
+                f"❌ Bot is not in a server with ID `{gid}`.", ephemeral=True
+            )
+            return
+
+        channel_ids = db.get_spawn_channels(str(gid))
+        if not channel_ids:
+            await interaction.followup.send(
+                f"❌ **{guild.name}** has no spawn channels configured. "
+                f"Use `/channels add` in that server first.",
+                ephemeral=True,
+            )
+            return
+
+        channel = guild.get_channel(int(channel_ids[0]))
+        if channel is None:
+            await interaction.followup.send(
+                "❌ Spawn channel not found — it may have been deleted.", ephemeral=True
+            )
+            return
+
+        # ── Resolve card ───────────────────────────────────────────────
+        name_input = self.card_name.value.strip()
+        card = card_module.find_card_by_name(name_input)
+        if card is None:
+            await interaction.followup.send(
+                f"❌ No card found matching **{name_input}**.\n"
+                f"Try the exact name (e.g. `Max Verstappen`) or driver code (e.g. `VER`).",
+                ephemeral=True,
+            )
+            return
+
+        # ── Spawn ──────────────────────────────────────────────────────
+        try:
+            from f1_images import get_spawn_file
+            spawn_file  = get_spawn_file(card)
+            spawn_embed = build_spawn_embed(
+                card,
+                image_filename=spawn_file.filename if spawn_file else None,
+            )
+            view = SpawnView(card)
+            if spawn_file:
+                msg = await channel.send(embed=spawn_embed, view=view, file=spawn_file)
+            else:
+                msg = await channel.send(embed=spawn_embed, view=view)
+            view.message = msg
+
+            rarity_e = card_module.RARITY_EMOJIS.get(card["rarity"], "")
+            await interaction.followup.send(
+                f"✅ Spawned {rarity_e} **{card['name']}** ({card['rarity'].title()}) "
+                f"in **{guild.name}** › #{channel.name}",
+                ephemeral=True,
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Spawn failed: {e}", ephemeral=True)
+
+
+class Spawn24View(discord.ui.View):
+    """One-button view that opens the Spawn24Modal. Only the owner who ran !spawn24 can use it."""
+
+    def __init__(self, owner_id: int):
+        super().__init__(timeout=120)
+        self.owner_id = owner_id
+
+    @discord.ui.button(label="🃏  Open Spawn Form", style=discord.ButtonStyle.primary)
+    async def open_form(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message("Only the owner can use this.", ephemeral=True)
+            return
+        await interaction.response.send_modal(Spawn24Modal())
+
+
+@bot.command(name="spawn24")
+async def force_spawn(ctx):
+    """Open the spawn form to force a specific card into any server. Bot owner only."""
+    if not await bot.is_owner(ctx.author):
+        await ctx.send("❌ Owner only.", delete_after=5)
+        return
+
+    embed = discord.Embed(
+        title="🃏  Force Card Spawn",
+        description=(
+            "Click the button below to open the spawn form.\n\n"
+            "You'll be able to specify:\n"
+            "• **Card name** — any driver or car name (or driver code)\n"
+            "• **Server ID** — the guild where the card will spawn"
+        ),
+        color=0x6c5ce7,
+    )
+    embed.set_footer(text="The card will appear in the server's first configured spawn channel.")
+    await ctx.send(embed=embed, view=Spawn24View(ctx.author.id))
+
+
 # ==================== UI COMPONENTS ====================
 
 class EquipTypeView(discord.ui.View):

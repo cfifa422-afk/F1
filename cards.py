@@ -334,3 +334,44 @@ def check_synergy(driver_code: str, car_team: str) -> Optional[Dict]:
 def generate_spawn_card() -> Dict:
     rarity = _roll_rarity({"mythic": 0.008, "legendary": 0.03, "epic": 0.12, "rare": 0.30, "common": 0.542})
     return _generate_card(rarity)
+
+
+def find_card_by_name(name: str) -> Optional[Dict]:
+    """
+    Search all driver and car pools for a card matching `name` (case-insensitive).
+    Also matches driver code (e.g. "VER"). Returns a fully formed card dict, or None.
+    """
+    name_lower = name.strip().lower()
+    perks = [random.choice(list(PERKS.keys()))] if random.random() < 0.30 else []
+
+    for rarity, pool in DRIVERS.items():
+        for d in pool:
+            if d["name"].lower() == name_lower or d.get("code", "").lower() == name_lower:
+                return {
+                    "id": f"{random.randint(0, 0xFFFFFFF):07X}",
+                    "type": "driver",
+                    "name": d["name"],
+                    "code": d["code"],
+                    "skill": d["skill"],
+                    "team": d["team"],
+                    "rarity": rarity,
+                    "perks": perks,
+                    "obtained_at": datetime.now().isoformat(),
+                }
+
+    for rarity, pool in CARS.items():
+        for c in pool:
+            if c["name"].lower() == name_lower:
+                return {
+                    "id": f"{random.randint(0, 0xFFFFFFF):07X}",
+                    "type": "car",
+                    "name": c["name"],
+                    "team": c["team"],
+                    "top_speed": c["top_speed"],
+                    "handling": c["handling"],
+                    "rarity": rarity,
+                    "perks": perks,
+                    "obtained_at": datetime.now().isoformat(),
+                }
+
+    return None
