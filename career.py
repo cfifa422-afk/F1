@@ -106,12 +106,117 @@ CAREER_TURNS  = 12
 SCENARIO_TURNS  = {3, 6, 9, 11}
 REACTION_TURNS  = [1, 2, 4, 5, 7, 8, 10]
 
-COMMENTARY = [
-    "The car is looking quick through the high-speed section.",
-    "Tyre degradation starting to become visible.",
-    "Gap holding steady — consistent pace from your side.",
-    "The rivals are pushing hard — no room for mistakes.",
+# ─── Commentary pools ────────────────────────────────────────────
+# Indexed by situation so we can pick context-aware lines every turn
+
+_CMT_LEADING = [
+    "🎙️ *\"He's pulling away lap by lap — an imperious drive!\"*",
+    "🎙️ *\"The gap is growing. This is measured, clinical pace.\"*",
+    "💨 Smooth through every sector — nothing wasted, nothing lost.",
+    "📡 Gap holding strong. The rivals can't find an answer.",
+    "🔵 Clean air up front. Every lap is a mini qualifying effort.",
+    "🏁 The pit-wall body language says it all — controlled and composed.",
 ]
+
+_CMT_CHASING = [
+    "🎙️ *\"He's hunting them down — tenth by tenth, corner by corner!\"*",
+    "🎙️ *\"The gap's coming down! Can he do it before the flag?\"*",
+    "📡 DRS range within striking distance — just keep the pressure on.",
+    "🔴 The car ahead is nervous. They know someone's coming.",
+    "⚡ Every clean exit from a corner chips away at the deficit.",
+    "🏎️ Closing the gap through traction zones — the tyres are alive.",
+]
+
+_CMT_MIDFIELD = [
+    "🎙️ *\"Solid midfield pace — consistent, aggressive, tactical.\"*",
+    "📻 A battle through the twisty middle sector — wheel to wheel.",
+    "💨 Points are on the table. Every position matters in this season.",
+    "🎯 Picking off rivals one by one — this could be huge for the standings.",
+    "📡 The field is compressed here — one mistake and it unravels.",
+]
+
+_CMT_PRESSURE = [
+    "🔴 *Incoming pressure* — the car behind is right in the DRS zone!",
+    "⚠️ They're on your gearbox! Defend, defend, defend!",
+    "🔥 Lap after lap of pressure — the tyres won't last forever.",
+    "😰 Side by side through the braking zone — this is the real racing!",
+    "📡 Radio: *\"He's right with you. Watch the mirrors through Turn 3.\"*",
+    "🏎️ Defending hard — every apex must be perfect or the place is gone.",
+]
+
+_CMT_HIGH_WEAR = [
+    "⚠️ Tyre degradation is becoming critical — be gentle on the rears.",
+    "📡 Radio: *\"Tyres are going off. We need to manage these to the flag.\"*",
+    "🌡️ Overheating rubber — the lap times are starting to suffer.",
+    "🔴 Sliding on the exits — these tyres are done. Pit window is open.",
+]
+
+_CMT_LOW_FUEL = [
+    "⛽ Radio: *\"Fuel is getting tight. We need to conserve from here.\"*",
+    "📡 Fuel saving mode activated — every gear shift counts now.",
+    "⚠️ Running on fumes in the final sector — this is going to be close.",
+]
+
+_CMT_RAIN = [
+    "🌧️ Rain intensifying — visibility dropping, grip levels unpredictable.",
+    "🌧️ Radio: *\"Track is still wet. Be careful through the fast stuff.\"*",
+    "🌧️ Aquaplaning risk on the straights — lift and coast where possible.",
+    "🌧️ *\"Whoever reads this weather best wins the race.\"* — commentator",
+]
+
+_CMT_FINAL_LAP = [
+    "🏁 **WHITE FLAG!** This is it — one lap to go. Leave everything on track.",
+    "🏁 *\"The chequered flag is within sight. Do NOT give this up now!\"*",
+    "🏁 FINAL LAP. Every corner is worth a season's worth of pride.",
+    "🏁 Radio: *\"Push, push, PUSH! This is what we came for!\"*",
+]
+
+_CMT_PIT = [
+    "🔧 **PIT STOP!** Fresh rubber fitted — the team nailed it!",
+    "🔧 In and out of the pits — track position traded for pace.",
+    "🔧 Radio: *\"Good stop. Get your head down and make up the places.\"*",
+]
+
+def _pick_commentary(
+    turn: int,
+    fuel: float,
+    tire_wear: float,
+    weather: str,
+    player_time: float,
+    npc_avg_time: float,
+    last_choice: Optional[str],
+) -> str:
+    """Return one context-aware commentary line for this turn."""
+    if turn >= 9:
+        return random.choice(_CMT_FINAL_LAP)
+    if last_choice == "pit_stop":
+        return random.choice(_CMT_PIT)
+    if weather == "rain":
+        return random.choice(_CMT_RAIN)
+    if fuel < 20:
+        return random.choice(_CMT_LOW_FUEL)
+    if tire_wear > 70:
+        return random.choice(_CMT_HIGH_WEAR)
+    # position-based
+    gap = player_time - npc_avg_time
+    if gap < -2.0:
+        return random.choice(_CMT_LEADING)
+    if gap > 2.0:
+        return random.choice(_CMT_CHASING)
+    if abs(gap) < 0.5:
+        return random.choice(_CMT_PRESSURE)
+    return random.choice(_CMT_MIDFIELD)
+
+def _fuel_bar(fuel: float) -> str:
+    filled = max(0, min(5, int(fuel / 20)))
+    icon = "🟢" if fuel > 50 else ("🟡" if fuel > 25 else "🔴")
+    return f"{icon} `{'█' * filled}{'░' * (5 - filled)}` {fuel:.0f}%"
+
+def _tyre_bar(wear: float) -> str:
+    health = 100.0 - wear
+    filled = max(0, min(5, int(health / 20)))
+    icon = "🟢" if health > 60 else ("🟡" if health > 30 else "🔴")
+    return f"{icon} `{'█' * filled}{'░' * (5 - filled)}` {health:.0f}%"
 
 def get_track(match_num: int) -> Dict:
     return CAREER_TRACKS[match_num - 1]
@@ -747,43 +852,54 @@ async def run_career_race(
         jitter = random.uniform(-0.25, 0.35)
         return base / speed_ratio - skill_bonus + jitter
 
-    def _build_race_embed(turn_num: int, choice_made: Optional[str] = None) -> discord.Embed:
-        lap = ((turn_num - 1) // 4) + 1
-        laps_label = f"Lap {min(lap, 3)}/3  ·  Turn {turn_num}/12"
-        gap_line = ""
-        if player_total_time < sum(npc_times) / max(len(npc_times), 1):
-            gap_line = "📈  Running **ahead** of the field average"
-        else:
-            gap_line = "📉  Running **behind** the field average"
+    def _pos_color(pos: int) -> int:
+        if pos <= 3:   return 0x00b894   # green  — podium
+        if pos <= 8:   return 0xfdcb6e   # amber  — points
+        return 0xe17055                   # red    — out of points
 
-        fuel_bar = "🟢" * int(fuel // 20) + "⬛" * (5 - int(fuel // 20))
-        wear_bar = "🟢" * (5 - int(tire_wear // 20)) + "🔴" * int(tire_wear // 20)
-        weather_icon = "🌧️" if weather == "rain" else "☀️"
+    def _gap_to_leader() -> str:
+        avg_npc = sum(npc_times) / max(len(npc_times), 1)
+        diff    = player_total_time - avg_npc
+        if diff < -1.0:  return f"📈 **+{abs(diff):.2f}s** ahead of field"
+        if diff >  1.0:  return f"📉 **+{diff:.2f}s** behind field"
+        return "📡 **Locked in** — right with the field"
+
+    def _build_race_embed(turn_num: int, choice_made: Optional[str] = None) -> discord.Embed:
+        lap       = min(((turn_num - 1) // 4) + 1, 3)
+        npc_avg   = sum(npc_times) / max(len(npc_times), 1)
+        gap_diff  = player_total_time - npc_avg
+
+        # Estimate rough position for color
+        beats     = sum(1 for t in npc_times if player_total_time <= t)
+        est_pos   = max(1, len(npcs) + 1 - beats)
+        color     = _pos_color(est_pos)
+
+        # Last 3 commentary lines — reversed so newest is first
+        cmt_block = "\n".join(commentary_lines[-3:]) if commentary_lines else "*Race underway…*"
+
+        w_icon = "🌧️ Rain" if weather == "rain" else "☀️ Clear"
+        choice_label = {
+            "accelerate": "🔥 Pushed Hard",
+            "same_speed": "➡️ Maintained",
+            "slow_down":  "🛑 Lifted Off",
+            "pit_stop":   "🔧 Pit Stop",
+        }.get(choice_made, "")
 
         e = discord.Embed(
-            title=f"🏎️  {track['flag']} {track['name']}  —  {laps_label}",
-            color=0x0984e3,
+            title=f"🏎️  {track['flag']} {track['name']}",
+            color=color,
         )
-        e.add_field(
-            name="⛽  Car Status",
-            value=f"Fuel: {fuel_bar} `{fuel:.0f}%`\nTyres: {wear_bar} `{100-tire_wear:.0f}%`\n{weather_icon} {weather.title()}",
-            inline=True,
+        e.description = (
+            f"**Lap {lap} / 3  ·  Turn {turn_num} / {CAREER_TURNS}**\n\n"
+            f"{_fuel_bar(fuel)}  ·  {_tyre_bar(tire_wear)}  ·  {w_icon}\n"
+            f"{_gap_to_leader()}\n\n"
+            f"{'─' * 30}\n"
+            f"{cmt_block}"
         )
-        e.add_field(
-            name="📡  Position",
-            value=gap_line,
-            inline=True,
-        )
-        if commentary_lines:
-            e.add_field(
-                name="📻  Commentary",
-                value="\n".join(commentary_lines[-3:]),
-                inline=False,
-            )
-        if choice_made:
-            e.set_footer(text=f"Last action: {choice_made.replace('_', ' ').title()}  ·  Next turn coming…")
-        else:
-            e.set_footer(text="Race in progress…")
+        footer_parts = [f"Match {match_num}/{TOTAL_MATCHES}"]
+        if choice_label:
+            footer_parts.append(choice_label)
+        e.set_footer(text="  ·  ".join(footer_parts))
         return e
 
     try:
@@ -791,19 +907,26 @@ async def run_career_race(
             lap = ((turn_num - 1) // 4) + 1
             player_choice: Optional[str] = None
 
-            if random.random() < 0.05:
+            # ── Random weather event ───────────────────────────────────
+            if random.random() < 0.05 and weather == "clear":
                 weather = "rain"
-                commentary_lines.append("🌧️  Rain begins to fall on the circuit!")
+                commentary_lines.append("🌧️ Rain begins to fall — conditions changing fast.")
 
-            # ── SCENARIO TURN ─────────────────────────────────────────
+            # ─────────────────────────────────────────────────────────
+            # SCENARIO TURN  (turns 3, 6, 9, 11)
+            # Show a clean decision embed — NO reaction on these turns
+            # ─────────────────────────────────────────────────────────
             if turn_num in CAREER_RACE_SCENARIOS:
                 scenario = CAREER_RACE_SCENARIOS[turn_num].copy()
                 if weather == "rain" and turn_num in (6, 9):
                     scenario = {
                         "id": "rain_call",
-                        "title": "🌧️  Rain! Box for Wets or Gamble?",
-                        "description": "Rain is falling! Slick tyres are dangerous. Box for wet tyres or gamble on the drying line?",
-                        "question": "Make the call.",
+                        "title": "🌧️  Weather Gamble!",
+                        "description": (
+                            "Rain is falling and slick tyres are becoming dangerous.\n"
+                            "Box for wet tyres and lose track position, or gamble on the drying line?"
+                        ),
+                        "question": "Make the call — time is running out.",
                         "options": [
                             {"label": "🌧️ Box for Wets",   "value": "pit_stop",   "style": discord.ButtonStyle.primary},
                             {"label": "🎰 Stay on Slicks", "value": "same_speed", "style": discord.ButtonStyle.danger},
@@ -811,33 +934,27 @@ async def run_career_race(
                     }
 
                 sv = CareerScenarioView(user, scenario)
-                scenario_embed = discord.Embed(
+
+                w_icon = "🌧️ Rain" if weather == "rain" else "☀️ Clear"
+                scen_emb = discord.Embed(
                     title=scenario["title"],
-                    description=f"{scenario['description']}\n\n*{scenario['question']}*",
                     color=0xF39C12,
                 )
-                scenario_embed.add_field(
-                    name="⛽  Your Status",
-                    value=f"Fuel: `{fuel:.0f}%`  ·  Tyres: `{100-tire_wear:.0f}%`  ·  Lap {lap}/3",
-                    inline=False,
+                scen_emb.description = (
+                    f"{scenario['description']}\n\n"
+                    f"*{scenario['question']}*\n\n"
+                    f"{'─' * 30}\n"
+                    f"{_fuel_bar(fuel)}  ·  {_tyre_bar(tire_wear)}  ·  {w_icon}  ·  Lap {lap}/3"
                 )
-                scenario_embed.set_footer(text=f"⏱️  {user.display_name} — you have 30 seconds to decide!")
+                scen_emb.set_footer(text=f"⏱️  30 seconds to decide  ·  Turn {turn_num}/{CAREER_TURNS}")
 
                 try:
-                    await msg_obj.edit(embed=scenario_embed, view=sv)
+                    await msg_obj.edit(embed=scen_emb, view=sv)
                 except Exception:
                     pass
 
                 try:
-                    await channel.send(
-                        f"⚠️  {user.mention} — **{scenario['title']}** Make your call now!",
-                        delete_after=30,
-                    )
-                except Exception:
-                    pass
-
-                try:
-                    await asyncio.wait_for(sv.chosen.wait(), timeout=31)
+                    await asyncio.wait_for(sv.chosen.wait(), timeout=30)
                 except asyncio.TimeoutError:
                     pass
 
@@ -845,106 +962,175 @@ async def run_career_race(
                 if player_choice == "pit_stop":
                     pit_hits += 1
 
+            # ─────────────────────────────────────────────────────────
+            # AUTO TURN  (all other turns)
+            # Smart choice based on car state
+            # ─────────────────────────────────────────────────────────
             else:
-                # ── AUTO TURN ──────────────────────────────────────────
                 if tire_wear > 75 or fuel < 25:
                     player_choice = random.choices(
                         ["accelerate", "same_speed", "slow_down"],
-                        weights=[0.15, 0.55, 0.30]
+                        weights=[0.15, 0.55, 0.30],
                     )[0]
                 elif tire_wear > 50 or fuel < 50:
                     player_choice = random.choices(
                         ["accelerate", "same_speed", "slow_down"],
-                        weights=[0.25, 0.55, 0.20]
+                        weights=[0.25, 0.55, 0.20],
                     )[0]
                 else:
                     player_choice = random.choices(
                         ["accelerate", "same_speed", "slow_down"],
-                        weights=[0.35, 0.50, 0.15]
+                        weights=[0.35, 0.50, 0.15],
                     )[0]
 
             # ── Apply consumables ──────────────────────────────────────
             if player_choice == "pit_stop":
                 fuel      = 100.0
                 tire_wear = 0.0
-                commentary_lines.append(f"🔧  **{user.display_name}** pits — fresh tyres and fuel!")
+                commentary_lines.append("🔧 **Box, box!** Fresh tyres and full fuel — back out clean.")
             else:
-                fuel      = max(0, fuel      - FUEL_BURN.get(player_choice, 3.5))
-                tire_wear = min(100, tire_wear + WEAR_RATE.get(player_choice, 5.5))
+                fuel      = max(0.0, fuel      - FUEL_BURN.get(player_choice, 3.5))
+                tire_wear = min(100.0, tire_wear + WEAR_RATE.get(player_choice, 5.5))
 
-            # ── Calculate times ────────────────────────────────────────
+            # ── Calculate turn times ───────────────────────────────────
             p_time = _player_turn_time(player_choice)
             player_total_time += p_time
             for i, npc in enumerate(npcs):
                 npc_times[i] += _npc_turn_time(npc)
 
-            # ── Update race embed ──────────────────────────────────────
+            # ── Add context-aware commentary ───────────────────────────
+            npc_avg_now = sum(npc_times) / max(len(npc_times), 1)
+            cmt = _pick_commentary(
+                turn_num, fuel, tire_wear, weather,
+                player_total_time, npc_avg_now, player_choice,
+            )
+            commentary_lines.append(cmt)
+
+            # ── Update the main race embed ─────────────────────────────
             try:
-                await msg_obj.edit(embed=_build_race_embed(turn_num, player_choice), view=None)
+                await msg_obj.edit(
+                    embed=_build_race_embed(turn_num, player_choice),
+                    view=None,
+                )
             except Exception:
                 pass
 
-            # ── REACTION CHALLENGE (channel only, auto-removes) ────────
+            # ─────────────────────────────────────────────────────────
+            # REACTION CHALLENGE
+            # Appears exactly 6 seconds after the turn update.
+            # Nothing else is shown during the reaction window.
+            # ─────────────────────────────────────────────────────────
             if turn_num in REACTION_TURNS:
-                qte_total += 1
-                direction  = random.choice(REACTION_DIRECTIONS)
-                dir_label  = REACTION_LABELS[direction]
+                # 6-second breathing gap — tension builds
+                await asyncio.sleep(6)
 
-                react_embed = discord.Embed(
+                qte_total += 1
+                direction = random.choice(REACTION_DIRECTIONS)
+                dir_label = REACTION_LABELS[direction]
+
+                # Map direction to a large, clean visual
+                dir_visual = {
+                    "left":  "◀",
+                    "right": "▶",
+                    "up":    "▲",
+                    "down":  "▼",
+                }.get(direction, "?")
+
+                react_emb = discord.Embed(
                     title="⚡  REACTION CHALLENGE!",
-                    description=(
-                        f"{user.mention} — Hit  **{dir_label}**  as fast as you can!\n\n"
-                        f"❌ Wrong direction = **+2.0s penalty**\n"
-                        f"⏱️ Miss = **+0.3s penalty**"
-                    ),
                     color=0xF1C40F,
                 )
-                react_embed.set_footer(text="⏱️  5 seconds — GO!")
+                react_emb.description = (
+                    f"{user.mention} — **REACT NOW!**\n\n"
+                    f"```\n"
+                    f"   {dir_visual}  {dir_label}\n"
+                    f"```\n"
+                    f"*❌ Wrong direction = +2.0s penalty*\n"
+                    f"*⏱️ No click = +0.3s penalty*"
+                )
+                react_emb.set_footer(text="⏱️  5 seconds — GO!")
 
                 rv   = CareerReactionView(direction, user)
                 rmsg = None
                 try:
-                    await channel.send(
-                        f"⚡  {user.mention} — **REACTION CHALLENGE!**  Hit  **{dir_label}**  NOW!",
-                        delete_after=6,
-                    )
-                    rmsg = await channel.send(embed=react_embed, view=rv)
+                    rmsg = await channel.send(embed=react_emb, view=rv)
                 except Exception:
                     rv.done.set()
 
                 try:
-                    await asyncio.wait_for(rv.done.wait(), timeout=5.5)
+                    await asyncio.wait_for(rv.done.wait(), timeout=5.2)
                 except asyncio.TimeoutError:
                     rv.stop()
-                    if rmsg:
-                        try:
+
+                # Collapse the reaction message
+                if rmsg:
+                    try:
+                        if rv.result:
+                            correct, elapsed = rv.result
+                            if correct:
+                                await rmsg.edit(
+                                    embed=discord.Embed(
+                                        description=f"✅  **Nailed it!**  `{elapsed:.2f}s` — **+0.5s** speed boost! 🚀",
+                                        color=0x00b894,
+                                    ),
+                                    view=None,
+                                )
+                            else:
+                                await rmsg.edit(
+                                    embed=discord.Embed(
+                                        description=f"❌  **Wrong direction!**  **+2.0s** penalty. 💀",
+                                        color=0xe17055,
+                                    ),
+                                    view=None,
+                                )
+                        else:
                             await rmsg.edit(
-                                content="⏱️  Too slow! Penalty applied.",
-                                embed=None,
+                                embed=discord.Embed(
+                                    description=f"⏱️  **Too slow!**  **+0.3s** penalty.",
+                                    color=0x636e72,
+                                ),
                                 view=None,
                             )
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
+                # Apply reaction result to race time + commentary
                 if rv.result:
                     correct, elapsed = rv.result
                     if correct:
                         qte_hits += 1
                         player_total_time -= 0.5
-                        commentary_lines.append(f"⚡  **{user.display_name}** nailed the reaction in `{elapsed:.2f}s`! +0.5s boost 🚀")
+                        commentary_lines.append(
+                            f"⚡ Reaction in `{elapsed:.2f}s` — **speed boost applied!** 🚀"
+                        )
                     else:
                         player_total_time += 2.0
-                        commentary_lines.append(f"❌  **{user.display_name}** hit the wrong direction — +2.0s penalty!")
+                        commentary_lines.append(
+                            "❌ Wrong direction — **+2.0s penalty!** That's going to hurt."
+                        )
                 else:
                     player_total_time += 0.3
-                    commentary_lines.append(f"⏱️  **{user.display_name}** missed the reaction — +0.3s penalty.")
+                    commentary_lines.append(
+                        "⏱️ Missed the reaction window — **+0.3s penalty** applied."
+                    )
 
-                await asyncio.sleep(1.5)
+                # Update main embed with reaction result baked in
+                try:
+                    await msg_obj.edit(
+                        embed=_build_race_embed(turn_num, player_choice),
+                        view=None,
+                    )
+                except Exception:
+                    pass
+
+                await asyncio.sleep(2)
+
             else:
-                await asyncio.sleep(2.5)
+                # Non-reaction auto turns: brief pause before next
+                await asyncio.sleep(3)
 
     except Exception as e:
-        commentary_lines.append(f"⚠️  Race interrupted: {e}")
+        commentary_lines.append(f"⚠️ Race interrupted: {e}")
 
     # ── Calculate Final Position ────────────────────────────────────────
     field: List[Dict] = []
