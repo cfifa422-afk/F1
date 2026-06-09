@@ -1,17 +1,19 @@
 ---
 name: Bot architecture
-description: How the F1 card bot is structured — single file, no Cogs, how to add commands
+description: Single-file bot structure, command group rules, registration pattern
 ---
 
-## Core facts
+All commands live in bot.py (~6500 lines). No Cog system. Groups use @group.command decorators and must be registered near the bottom with bot.tree.add_command(group).
 
-- All commands are in `bot.py` (6300+ lines). No Cog system.
-- Commands use `@bot.tree.command` or `@group.command` decorators at module level.
-- New top-level groups must be registered with `bot.tree.add_command(group)` — these calls live near the bottom of bot.py before `if __name__ == "__main__":`.
-- Nested sub-groups use `parent=parent_group` in the `app_commands.Group(...)` constructor.
-- Data layer: `database.py` — flat JSON file (`f1_data.json`), `Database` class with all methods.
-- Entry point: `python bot.py` (workflow: "Start application").
+**Critical Discord API rule**: A command group cannot have BOTH direct subcommands AND subgroups. If it does, Discord silently hides everything. Solution: move nested groups to top-level and register them separately.
 
-**Why:** The original bot was built without Cogs and adding them would require a large refactor. Future additions should follow the same pattern: append commands/groups to bot.py, add helper classes/functions above, register new top-level groups at the bottom.
+Current top-level registrations (near end of bot.py):
+- bot.tree.add_command(pack_group)
+- bot.tree.add_command(f1_group)
+- bot.tree.add_command(config_group)
+- bot.tree.add_command(channels_group)   ← standalone (not nested in config)
+- bot.tree.add_command(trade_group)
+- bot.tree.add_command(player_group)
+- bot.tree.add_command(blacklist_group)  ← standalone (not nested in config)
 
-**How to apply:** When adding new commands, append them before `if __name__ == "__main__":` and register any new top-level groups with `bot.tree.add_command(...)`.
+**Why:** config_group has direct subcommands (status/enable/disable/adddriver etc.). Discord forbids mixing subcommands + subgroups at same level.

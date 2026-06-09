@@ -4,7 +4,7 @@ from discord import app_commands
 import asyncio
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Literal
 import random
 
@@ -2046,10 +2046,9 @@ async def f1_sell(interaction: discord.Interaction):
 
 # ==================== TRADING SYSTEM ====================
 
-# ── Multi-card trade state ────────────────────────────────────────────────────
-# trade_id → {"offerer_id", "target_id", "offerer_cards", "target_cards",
-#              "offerer_confirmed", "target_confirmed"}
-_active_multi_trades: Dict[str, Dict] = {}
+TRADE_TIMEOUT = 30  # minutes
+
+_active_trades: Dict[str, Dict] = {}
 
 
 def _is_starter(card_id: str) -> bool:
@@ -2062,26 +2061,92 @@ def _card_label(card: Dict) -> str:
     if card.get("type") == "driver":
         return f"{emoji} {card['name']} ({card.get('code','?')}) — {rarity}"
     elif card.get("type") == "team_asset":
-        return f"🏗️ {card['name']} ({card.get('role','?')}) — {rarity}"
+        return f"\U0001f3d7\ufe0f {card['name']} ({card.get('role','?')}) — {rarity}"
     return f"{emoji} {card['name']} — {rarity}"
 
 
-def _trade_cards_str(cards: List[Dict], confirmed: bool) -> str:
+def _trade_prefix(cancelled: bool, accepted: bool, locked: bool) -> str:
+    if cancelled:
+        return "\N{NO ENTRY SIGN} "
+    elif accepted:
+        return "\N{WHITE HEAVY CHECK MARK} "
+    elif locked:
+        return "\N{LOCK} "
+    return ""
+
+
+def _build_trade_field(cards: List[Dict], locked: bool, cancelled: bool) -> str:
     if not cards:
-        return "*No cards added yet*"
+        return "*Empty*"
     lines = []
     for c in cards:
-        re = card_module.RARITY_EMOJIS.get(c.get("rarity", "common"), "")
-        lines.append(f"{re} **{c['name']}**")
-    if confirmed:
-        lines.append("✅ **CONFIRMED**")
-    return "\n".join(lines)
+        label = _card_label(c)
+        if cancelled:
+            line = f"~~- {label}~~"
+        elif locked:
+            line = f"- *{label}*"
+        else:
+            line = f"- {label}"
+        lines.append(line)
+    result = "\n".join(lines)
+    if len(result) > 950:
+        result = result[:950] + "\n*…(truncated)*"
+    return result
 
+
+def _fill_trade_embed_fields(
+    embed: discord.Embed,
+    trade: Dict,
+    offerer: discord.Member,
+    target: discord.Member,
+    offerer_cancelled: bool = False,
+    target_cancelled: bool = False,
+):
+    embed.clear_fields()
+    o_locked   = trade.get("offerer_locked",   False)
+    t_locked   = trade.get("target_locked",    False)
+    o_accepted = trade.get("offerer_accepted", False)
+    t_accepted = trade.get("target_accepted",  False)
+    embed.add_field(
+        name=f"{_trade_prefix(offerer_cancelled, o_accepted, o_locked)}{offerer.name}",
+        value=_build_trade_field(trade["offerer_cards"], o_locked, offerer_cancelled),
+        inline=True,
+    )
+    embed.add_field(
+        name=f"{_trade_prefix(target_cancelled, t_accepted, t_locked)}{target.name}",
+        value=_build_trade_field(trade["target_cards"], t_locked, target_cancelled),
+        inline=True,
+    )
+
+
+# ── Inline yes/no confirm used inside trade flows ─────────────────────────────
+
+class _InlineConfirmView(discord.ui.View):
+    def __init__(self, user: discord.Member):
+        super().__init__(timeout=30)
+        self.user  = user
+        self.value = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        return interaction.user.id == self.user.id
+
+    @discord.ui.button(style=discord.ButtonStyle.success, emoji="\N{HEAVY CHECK MARK}\N{VARIATION SELECTOR-16}")
+    async def yes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = True
+        self.stop()
+        await interaction.response.edit_message(content="Confirmed.", view=None)
+
+    @discord.ui.button(style=discord.ButtonStyle.danger, emoji="\N{HEAVY MULTIPLICATION X}\N{VARIATION SELECTOR-16}")
+    async def no(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+        await interaction.response.edit_message(content="This request has been cancelled.", view=None)
+
+
+# ── Card picker — ephemeral dropdown to add one card ─────────────────────────
 
 class TradeCardPickerView(discord.ui.View):
-    """Ephemeral dropdown — player picks one card to add to their trade side."""
-
-    def __init__(self, trade_view: "MultiTradeView", player: discord.Member,
+    def __init__(self, trade_view: "TradeProposalView", player: discord.Member,
                  is_offerer: bool, cards: List[Dict]):
         super().__init__(timeout=60)
         self.trade_view = trade_view
@@ -2091,333 +2156,424 @@ class TradeCardPickerView(discord.ui.View):
 
         options = []
         for c in cards[:25]:
-            price = card_module.SELL_VALUES.get(c.get("rarity", "common"), 0)
             options.append(discord.SelectOption(
-                label=f"{c['name']}"[:100],
+                label=c["name"][:100],
                 value=c["id"],
-                description=f"{c.get('rarity','').title()} · worth {price:,} coins"[:100],
+                description=f"{c.get('rarity','').title()} · #{c['id'].upper()}"[:100],
                 emoji=card_module.RARITY_EMOJIS.get(c.get("rarity", "common"), None),
             ))
             self._cards[c["id"]] = c
 
-        sel = discord.ui.Select(placeholder="Pick a card to add to your offer…", options=options)
+        sel = discord.ui.Select(placeholder="Pick a card to add to your proposal…", options=options)
         sel.callback = self._on_select
         self.add_item(sel)
 
     async def _on_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.player.id:
-            await interaction.response.send_message("Not your picker!", ephemeral=True)
+            await interaction.response.send_message(
+                "You are not allowed to interact with this menu.", ephemeral=True
+            )
             return
         card_id = interaction.data["values"][0]
         card    = self._cards.get(card_id)
-        trade   = _active_multi_trades.get(self.trade_view.trade_id)
+        trade   = _active_trades.get(self.trade_view.trade_id)
         if not card or not trade:
             await interaction.response.edit_message(content="Trade expired.", view=None)
             return
 
-        async with self.trade_view.lock:
+        async with self.trade_view._lock:
             side = trade["offerer_cards"] if self.is_offerer else trade["target_cards"]
             if len(side) >= 5:
-                await interaction.response.edit_message(content="Maximum 5 cards per side reached.", view=None)
+                await interaction.response.edit_message(
+                    content="You cannot add more than 5 cards per side.", view=None
+                )
                 return
             if any(c["id"] == card_id for c in side):
-                await interaction.response.edit_message(content="That card is already in your offer.", view=None)
+                await interaction.response.edit_message(
+                    content="You already have this card in your proposal.", view=None
+                )
                 return
             side.append(card)
-            # reset this player's confirmation when they change their offer
-            if self.is_offerer:
-                trade["offerer_confirmed"] = False
-            else:
-                trade["target_confirmed"] = False
 
         self.stop()
-        await interaction.response.edit_message(
-            content=f"✅  Added **{card['name']}** to your offer!", view=None
-        )
+        await interaction.response.edit_message(content=f"{card['name']} added.", view=None)
         if self.trade_view.message:
             try:
+                _fill_trade_embed_fields(
+                    self.trade_view.embed, trade,
+                    self.trade_view.offerer, self.trade_view.target,
+                )
                 await self.trade_view.message.edit(
-                    embed=self.trade_view.build_embed(), view=self.trade_view
+                    embed=self.trade_view.embed, view=self.trade_view
                 )
             except Exception:
                 pass
 
 
-class MultiTradeView(discord.ui.View):
-    """
-    Live trade room — both players add / remove cards, then both confirm.
-    Supports up to 5 cards per side.
-    """
+# ── Phase 1: Proposal view — add cards, lock, reset, cancel ──────────────────
 
+class TradeProposalView(discord.ui.View):
     def __init__(self, trade_id: str, offerer: discord.Member, target: discord.Member):
-        super().__init__(timeout=300)
+        super().__init__(timeout=60 * TRADE_TIMEOUT + 1)
         self.trade_id = trade_id
         self.offerer  = offerer
         self.target   = target
-        self.lock     = asyncio.Lock()
+        self._lock    = asyncio.Lock()
         self.message: Optional[discord.Message] = None
+        self.embed    = discord.Embed()
+        self._task: Optional[asyncio.Task] = None
 
     def _is_participant(self, user_id: int) -> bool:
         return user_id in (self.offerer.id, self.target.id)
 
-    def build_embed(self) -> discord.Embed:
-        trade = _active_multi_trades.get(self.trade_id)
-        if not trade:
-            return discord.Embed(title="Trade expired", color=0xE74C3C)
+    def setup_embed(self):
+        timeout_dt = discord.utils.format_dt(
+            discord.utils.utcnow() + timedelta(minutes=TRADE_TIMEOUT), style="R"
+        )
+        self.embed.title       = "F1 cards trading"
+        self.embed.colour      = discord.Colour.blurple()
+        self.embed.description = (
+            "Add or remove F1 cards you want to propose to the other player "
+            "using the **Add card** and **Reset** buttons below.\n"
+            "Once you're finished, click the **\N{LOCK} Lock proposal** button to confirm your proposal.\n"
+            "You can also lock with nothing if you're receiving a gift.\n\n"
+            f"*This trade will timeout {timeout_dt}.*"
+        )
+        self.embed.set_footer(
+            text="This message is updated every 15 seconds, "
+                 "but you can keep on editing your proposal."
+        )
 
-        oc = trade["offerer_cards"]
-        tc = trade["target_cards"]
-        e  = discord.Embed(
-            title="🔄  Multi-Card Trade",
-            description=(
-                f"{self.offerer.mention}  ↔️  {self.target.mention}\n\n"
-                f"Both players add cards (up to **5 each**), then both press "
-                f"**✅ Confirm Trade** to complete the swap.\n"
-                f"Either player can press **❌ Cancel** at any time."
-            ),
-            color=0xF39C12,
-        )
-        e.add_field(
-            name=f"{'✅ ' if trade['offerer_confirmed'] else '🔴 '}{self.offerer.display_name}",
-            value=_trade_cards_str(oc, trade["offerer_confirmed"]),
-            inline=True,
-        )
-        e.add_field(name="↔️", value="\u200b", inline=True)
-        e.add_field(
-            name=f"{'✅ ' if trade['target_confirmed'] else '🔵 '}{self.target.display_name}",
-            value=_trade_cards_str(tc, trade["target_confirmed"]),
-            inline=True,
-        )
-        e.set_footer(text=f"Cards: {len(oc)}/5 ↔ {len(tc)}/5  ·  Trade expires in 5 minutes")
-        return e
+    async def _update_loop(self):
+        while True:
+            await asyncio.sleep(15)
+            trade = _active_trades.get(self.trade_id)
+            if not trade or self.is_finished():
+                return
+            try:
+                _fill_trade_embed_fields(self.embed, trade, self.offerer, self.target)
+                if self.message:
+                    await self.message.edit(embed=self.embed)
+            except Exception:
+                pass
 
-    # ── Add Card ──────────────────────────────────────────────────────────────
-    @discord.ui.button(label="➕ Add Card", style=discord.ButtonStyle.success, row=0)
-    async def add_card_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not self._is_participant(interaction.user.id):
-            await interaction.response.send_message("You're not part of this trade!", ephemeral=True)
-            return
-        trade = _active_multi_trades.get(self.trade_id)
+            await interaction.response.send_message(
+                "You are not allowed to interact with this trade.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def cancel(self, reason: str = "The trade has been cancelled."):
+        if self._task:
+            self._task.cancel()
+        self.stop()
+        trade = _active_trades.pop(self.trade_id, None) or {"offerer_cards": [], "target_cards": []}
+        for item in self.children:
+            item.disabled = True  # type: ignore
+        _fill_trade_embed_fields(
+            self.embed, trade, self.offerer, self.target,
+            offerer_cancelled=True, target_cancelled=True,
+        )
+        self.embed.colour      = discord.Colour.dark_red()
+        self.embed.description = f"**{reason}**"
+        if self.message:
+            try:
+                await self.message.edit(content=None, embed=self.embed, view=self)
+            except Exception:
+                pass
+
+    async def on_timeout(self):
+        await self.cancel("The trade has timed out.")
+
+    # ── Add card ──────────────────────────────────────────────────────────────
+    @discord.ui.button(label="Add card", emoji="\N{HEAVY PLUS SIGN}",
+                       style=discord.ButtonStyle.secondary, row=0)
+    async def add_card_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        trade = _active_trades.get(self.trade_id)
         if not trade:
             await interaction.response.send_message("Trade has expired.", ephemeral=True)
             return
-
         is_offerer = interaction.user.id == self.offerer.id
-        side       = trade["offerer_cards"] if is_offerer else trade["target_cards"]
-        confirmed  = trade["offerer_confirmed"] if is_offerer else trade["target_confirmed"]
-
-        if confirmed:
+        if trade.get("offerer_locked" if is_offerer else "target_locked"):
             await interaction.response.send_message(
-                "You've already confirmed — press **❌ Cancel** to restart, or wait for the other player.",
+                "You have locked your proposal, it cannot be edited! "
+                "You can click the cancel button to stop the trade instead.",
                 ephemeral=True,
             )
             return
+        side = trade["offerer_cards"] if is_offerer else trade["target_cards"]
         if len(side) >= 5:
-            await interaction.response.send_message("Maximum 5 cards per side reached.", ephemeral=True)
+            await interaction.response.send_message(
+                "You cannot add more than 5 cards per side.", ephemeral=True
+            )
             return
-
-        player_id       = str(interaction.user.id)
-        already_ids     = {c["id"] for c in side}
-        all_p           = db.get_all_cards_sorted(player_id)
-        tradeable       = [c for c in all_p if not _is_starter(c["id"]) and c["id"] not in already_ids]
-
+        player_id   = str(interaction.user.id)
+        already_ids = {c["id"] for c in side}
+        all_p       = db.get_all_cards_sorted(player_id)
+        tradeable   = [c for c in all_p if not _is_starter(c["id"]) and c["id"] not in already_ids]
         if not tradeable:
             await interaction.response.send_message(
                 "No more tradeable cards to add (starter cards are protected).", ephemeral=True
             )
             return
-
         picker = TradeCardPickerView(self, interaction.user, is_offerer, tradeable[:25])
         await interaction.response.send_message(
-            "Select a card to add to your offer:", view=picker, ephemeral=True
+            "Pick a card to add to your proposal:", view=picker, ephemeral=True
         )
 
-    # ── Remove Card ───────────────────────────────────────────────────────────
-    @discord.ui.button(label="➖ Remove Card", style=discord.ButtonStyle.secondary, row=0)
-    async def remove_card_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self._is_participant(interaction.user.id):
-            await interaction.response.send_message("You're not part of this trade!", ephemeral=True)
-            return
-        trade = _active_multi_trades.get(self.trade_id)
+    # ── Reset ─────────────────────────────────────────────────────────────────
+    @discord.ui.button(label="Reset", emoji="\N{DASH SYMBOL}",
+                       style=discord.ButtonStyle.secondary, row=0)
+    async def reset_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        trade = _active_trades.get(self.trade_id)
         if not trade:
             await interaction.response.send_message("Trade has expired.", ephemeral=True)
             return
-
         is_offerer = interaction.user.id == self.offerer.id
-        confirmed  = trade["offerer_confirmed"] if is_offerer else trade["target_confirmed"]
-        if confirmed:
+        if trade.get("offerer_locked" if is_offerer else "target_locked"):
             await interaction.response.send_message(
-                "You've already confirmed. Use **❌ Cancel** to start over.", ephemeral=True
+                "You have locked your proposal, it cannot be edited! "
+                "You can click the cancel button to stop the trade instead.",
+                ephemeral=True,
             )
             return
-
-        removed_name = None
-        async with self.lock:
-            side = trade["offerer_cards"] if is_offerer else trade["target_cards"]
-            if not side:
-                await interaction.response.send_message("No cards to remove.", ephemeral=True)
-                return
-            removed      = side.pop()
-            removed_name = removed["name"]
-            if is_offerer:
-                trade["offerer_confirmed"] = False
-            else:
-                trade["target_confirmed"] = False
-
+        confirm_view = _InlineConfirmView(interaction.user)
         await interaction.response.send_message(
-            f"Removed **{removed_name}** from your offer.", ephemeral=True
+            "Are you sure you want to clear your proposal?", view=confirm_view, ephemeral=True
         )
+        await confirm_view.wait()
+        if not confirm_view.value:
+            return
+        async with self._lock:
+            if is_offerer:
+                trade["offerer_cards"] = []
+            else:
+                trade["target_cards"] = []
+        _fill_trade_embed_fields(self.embed, trade, self.offerer, self.target)
         if self.message:
             try:
-                await self.message.edit(embed=self.build_embed(), view=self)
+                await self.message.edit(embed=self.embed, view=self)
             except Exception:
                 pass
 
-    # ── Confirm Trade ─────────────────────────────────────────────────────────
-    @discord.ui.button(label="✅ Confirm Trade", style=discord.ButtonStyle.primary, row=1)
-    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self._is_participant(interaction.user.id):
-            await interaction.response.send_message("You're not part of this trade!", ephemeral=True)
-            return
-        trade = _active_multi_trades.get(self.trade_id)
+    # ── Lock proposal ─────────────────────────────────────────────────────────
+    @discord.ui.button(label="Lock proposal", emoji="\N{LOCK}",
+                       style=discord.ButtonStyle.primary, row=0)
+    async def lock_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        trade = _active_trades.get(self.trade_id)
         if not trade:
             await interaction.response.send_message("Trade has expired.", ephemeral=True)
             return
-
-        is_offerer  = interaction.user.id == self.offerer.id
-        my_cards    = trade["offerer_cards"]    if is_offerer else trade["target_cards"]
-        their_cards = trade["target_cards"]     if is_offerer else trade["offerer_cards"]
-
-        if not my_cards:
-            await interaction.response.send_message("Add at least 1 card before confirming.", ephemeral=True)
-            return
-        if not their_cards:
+        is_offerer = interaction.user.id == self.offerer.id
+        lock_key   = "offerer_locked" if is_offerer else "target_locked"
+        if trade.get(lock_key):
             await interaction.response.send_message(
-                "Waiting for the other player to add their cards.", ephemeral=True
+                "You have already locked your proposal!", ephemeral=True
             )
             return
-
-        execute_trade = False
-        async with self.lock:
-            if is_offerer:
-                trade["offerer_confirmed"] = True
-            else:
-                trade["target_confirmed"] = True
-            execute_trade = trade["offerer_confirmed"] and trade["target_confirmed"]
-
-        if not execute_trade:
-            await interaction.response.send_message(
-                "✅ Your side is confirmed! Waiting for the other player to confirm.", ephemeral=True
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        async with self._lock:
+            trade[lock_key] = True
+            both_locked = trade["offerer_locked"] and trade["target_locked"]
+        if both_locked:
+            if not trade["offerer_cards"] and not trade["target_cards"]:
+                await self.cancel(
+                    "Nothing has been proposed in the trade, it has been cancelled."
+                )
+                await interaction.followup.send(
+                    "Trade cancelled — nothing was proposed.", ephemeral=True
+                )
+                return
+            if self._task:
+                self._task.cancel()
+            self.stop()
+            self.embed.colour      = discord.Colour.yellow()
+            self.embed.description = (
+                "Both users locked their propositions! "
+                "Now confirm to conclude this trade."
             )
+            _fill_trade_embed_fields(self.embed, trade, self.offerer, self.target)
+            confirm_view = TradeConfirmView(
+                self.trade_id, self.offerer, self.target, self.message, self.embed
+            )
+            await self.message.edit(content=None, embed=self.embed, view=confirm_view)
+            await interaction.followup.send(
+                "Your proposal has been locked. Now confirm again to end the trade.",
+                ephemeral=True,
+            )
+        else:
+            _fill_trade_embed_fields(self.embed, trade, self.offerer, self.target)
             if self.message:
-                try:
-                    await self.message.edit(embed=self.build_embed(), view=self)
-                except Exception:
-                    pass
-            return
-
-        # ── Both confirmed — execute the swap ────────────────────────────────
-        _active_multi_trades.pop(self.trade_id, None)
-        self.stop()
-
-        offerer_id = str(self.offerer.id)
-        target_id  = str(self.target.id)
-
-        # Verify all cards still exist before swapping
-        for c in trade["offerer_cards"]:
-            if not db.get_card_by_id(offerer_id, c["id"]):
-                await interaction.response.send_message(
-                    f"❌ Trade failed — {self.offerer.display_name}'s card **{c['name']}** was already traded or sold.",
-                    ephemeral=False,
-                )
-                return
-        for c in trade["target_cards"]:
-            if not db.get_card_by_id(target_id, c["id"]):
-                await interaction.response.send_message(
-                    f"❌ Trade failed — {self.target.display_name}'s card **{c['name']}** was already traded or sold.",
-                    ephemeral=False,
-                )
-                return
-
-        # Remove from original owners
-        for c in trade["offerer_cards"]:
-            db.remove_card(offerer_id, c["id"])
-        for c in trade["target_cards"]:
-            db.remove_card(target_id, c["id"])
-
-        # Add to new owners (strip timestamps, mark as trade)
-        for c in trade["offerer_cards"]:
-            copy = {k: v for k, v in c.items() if k not in ("obtained_at", "caught_at")}
-            copy["obtained_by"] = "trade"
-            db.add_card_to_player(target_id, copy, c.get("type", "driver"))
-        for c in trade["target_cards"]:
-            copy = {k: v for k, v in c.items() if k not in ("obtained_at", "caught_at")}
-            copy["obtained_by"] = "trade"
-            db.add_card_to_player(offerer_id, copy, c.get("type", "driver"))
-
-        def _received_str(cards: List[Dict]) -> str:
-            return "\n".join(
-                f"{card_module.RARITY_EMOJIS.get(c.get('rarity','common'),'')} **{c['name']}**"
-                for c in cards
+                await self.message.edit(embed=self.embed, view=self)
+            await interaction.followup.send(
+                "Your proposal has been locked. "
+                "You can wait for the other user to lock their proposal.",
+                ephemeral=True,
             )
 
-        db.record_trade(offerer_id, target_id, trade["offerer_cards"], trade["target_cards"])
-
-        result_embed = discord.Embed(
-            title="✅  Trade Complete!",
-            description=f"{self.offerer.mention} and {self.target.mention} exchanged cards!",
-            color=0x2ECC71,
-        )
-        result_embed.add_field(
-            name=f"📬  {self.offerer.display_name} received",
-            value=_received_str(trade["target_cards"]),
-            inline=True,
-        )
-        result_embed.add_field(
-            name=f"📬  {self.target.display_name} received",
-            value=_received_str(trade["offerer_cards"]),
-            inline=True,
-        )
-        result_embed.set_footer(text="Use /trade history to see your past trades")
-        await interaction.response.edit_message(embed=result_embed, view=None)
-
-    # ── Cancel ────────────────────────────────────────────────────────────────
-    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger, row=1)
+    # ── Cancel trade ──────────────────────────────────────────────────────────
+    @discord.ui.button(label="Cancel trade",
+                       emoji="\N{HEAVY MULTIPLICATION X}\N{VARIATION SELECTOR-16}",
+                       style=discord.ButtonStyle.danger, row=0)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not self._is_participant(interaction.user.id):
-            await interaction.response.send_message("You're not part of this trade!", ephemeral=True)
-            return
-        _active_multi_trades.pop(self.trade_id, None)
-        self.stop()
-        embed = discord.Embed(
-            title="❌  Trade Cancelled",
-            description=f"{interaction.user.display_name} cancelled the trade.",
-            color=0xE74C3C,
+        confirm_view = _InlineConfirmView(interaction.user)
+        await interaction.response.send_message(
+            "Are you sure you want to cancel this trade?", view=confirm_view, ephemeral=True
         )
-        await interaction.response.edit_message(embed=embed, view=None)
+        await confirm_view.wait()
+        if not confirm_view.value:
+            return
+        await self.cancel()
+        await interaction.followup.send("Trade has been cancelled.", ephemeral=True)
+
+
+# ── Phase 2: Confirm view — both press ✅ to complete ─────────────────────────
+
+class TradeConfirmView(discord.ui.View):
+    def __init__(self, trade_id: str, offerer: discord.Member, target: discord.Member,
+                 message: discord.Message, embed: discord.Embed):
+        super().__init__(timeout=60 * 15)
+        self.trade_id = trade_id
+        self.offerer  = offerer
+        self.target   = target
+        self.message  = message
+        self.embed    = embed
+
+    def _is_participant(self, user_id: int) -> bool:
+        return user_id in (self.offerer.id, self.target.id)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not self._is_participant(interaction.user.id):
+            await interaction.response.send_message(
+                "You are not allowed to interact with this trade.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def cancel(self, reason: str = "The trade has been cancelled."):
+        self.stop()
+        trade = _active_trades.pop(self.trade_id, None) or {"offerer_cards": [], "target_cards": []}
+        for item in self.children:
+            item.disabled = True  # type: ignore
+        _fill_trade_embed_fields(
+            self.embed, trade, self.offerer, self.target,
+            offerer_cancelled=True, target_cancelled=True,
+        )
+        self.embed.colour      = discord.Colour.dark_red()
+        self.embed.description = f"**{reason}**"
+        if self.message:
+            try:
+                await self.message.edit(content=None, embed=self.embed, view=self)
+            except Exception:
+                pass
 
     async def on_timeout(self):
-        _active_multi_trades.pop(self.trade_id, None)
-        if self.message:
-            try:
-                embed = discord.Embed(
-                    title="⏰  Trade Expired",
-                    description="This trade offer has expired (5-minute timeout).",
-                    color=0x95a5a6,
-                )
-                await self.message.edit(embed=embed, view=None)
-            except Exception:
-                pass
+        await self.cancel("The trade has timed out.")
+
+    @discord.ui.button(style=discord.ButtonStyle.success,
+                       emoji="\N{HEAVY CHECK MARK}\N{VARIATION SELECTOR-16}")
+    async def accept_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        trade = _active_trades.get(self.trade_id)
+        if not trade:
+            await interaction.response.send_message("Trade has expired.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        is_offerer  = interaction.user.id == self.offerer.id
+        accept_key  = "offerer_accepted" if is_offerer else "target_accepted"
+        if trade.get(accept_key):
+            await interaction.followup.send("You have already accepted this trade.", ephemeral=True)
+            return
+        trade[accept_key]  = True
+        both_accepted      = trade.get("offerer_accepted") and trade.get("target_accepted")
+        _fill_trade_embed_fields(self.embed, trade, self.offerer, self.target)
+        if both_accepted:
+            self.stop()
+            offerer_id = str(self.offerer.id)
+            target_id  = str(self.target.id)
+            # Verify cards still belong to their owners
+            for c in trade["offerer_cards"]:
+                if not db.get_card_by_id(offerer_id, c["id"]):
+                    self.embed.colour      = discord.Colour.red()
+                    self.embed.description = (
+                        "\N{WARNING SIGN} An attempt to modify the cards during the trade "
+                        "was detected and the trade was cancelled."
+                    )
+                    _active_trades.pop(self.trade_id, None)
+                    await self.message.edit(content=None, embed=self.embed, view=None)
+                    await interaction.followup.send(
+                        "\N{WARNING SIGN} An error occurred while concluding the trade.",
+                        ephemeral=True,
+                    )
+                    return
+            for c in trade["target_cards"]:
+                if not db.get_card_by_id(target_id, c["id"]):
+                    self.embed.colour      = discord.Colour.red()
+                    self.embed.description = (
+                        "\N{WARNING SIGN} An attempt to modify the cards during the trade "
+                        "was detected and the trade was cancelled."
+                    )
+                    _active_trades.pop(self.trade_id, None)
+                    await self.message.edit(content=None, embed=self.embed, view=None)
+                    await interaction.followup.send(
+                        "\N{WARNING SIGN} An error occurred while concluding the trade.",
+                        ephemeral=True,
+                    )
+                    return
+            # Execute swap
+            for c in trade["offerer_cards"]:
+                db.remove_card(offerer_id, c["id"])
+            for c in trade["target_cards"]:
+                db.remove_card(target_id, c["id"])
+            for c in trade["offerer_cards"]:
+                copy = {k: v for k, v in c.items() if k not in ("obtained_at", "caught_at")}
+                copy["obtained_by"] = "trade"
+                db.add_card_to_player(target_id, copy, c.get("type", "driver"))
+            for c in trade["target_cards"]:
+                copy = {k: v for k, v in c.items() if k not in ("obtained_at", "caught_at")}
+                copy["obtained_by"] = "trade"
+                db.add_card_to_player(offerer_id, copy, c.get("type", "driver"))
+            db.record_trade(offerer_id, target_id, trade["offerer_cards"], trade["target_cards"])
+            _active_trades.pop(self.trade_id, None)
+            for item in self.children:
+                item.disabled = True  # type: ignore
+            self.embed.colour      = discord.Colour.green()
+            self.embed.description = "Trade concluded!"
+            await self.message.edit(content=None, embed=self.embed, view=self)
+            await interaction.followup.send("The trade is now concluded.", ephemeral=True)
+        else:
+            await self.message.edit(embed=self.embed, view=self)
+            await interaction.followup.send(
+                "You have accepted the trade, waiting for the other user...", ephemeral=True
+            )
+
+    @discord.ui.button(style=discord.ButtonStyle.danger,
+                       emoji="\N{HEAVY MULTIPLICATION X}\N{VARIATION SELECTOR-16}")
+    async def deny_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        confirm_view = _InlineConfirmView(interaction.user)
+        await interaction.response.send_message(
+            "Are you sure you want to cancel this trade?", view=confirm_view, ephemeral=True
+        )
+        await confirm_view.wait()
+        if not confirm_view.value:
+            return
+        await self.cancel()
+        await interaction.followup.send("Trade has been cancelled.", ephemeral=True)
 
 
-@f1_group.command(name="trade", description="Trade cards with another player — add multiple cards to your offer")
+@f1_group.command(name="trade", description="Trade F1 cards with another player")
 @discord.app_commands.describe(player="The player you want to trade with")
 async def f1_trade(interaction: discord.Interaction, player: discord.Member):
     if player.id == interaction.user.id:
-        await interaction.response.send_message("You can't trade with yourself!", ephemeral=True)
+        await interaction.response.send_message(
+            "You cannot trade with yourself.", ephemeral=True
+        )
         return
     if player.bot:
-        await interaction.response.send_message("You can't trade with a bot!", ephemeral=True)
+        await interaction.response.send_message(
+            "You cannot trade with bots.", ephemeral=True
+        )
         return
 
     offerer_id = str(interaction.user.id)
@@ -2427,58 +2583,57 @@ async def f1_trade(interaction: discord.Interaction, player: discord.Member):
 
     if not db.player_exists(target_id):
         await interaction.response.send_message(
-            f"{player.display_name} hasn't started playing yet — they need to use `/f1 profile` first.",
+            f"{player.display_name} doesn't have any F1 cards yet.",
             ephemeral=True,
         )
         return
-
     if db.is_blocked(offerer_id, target_id):
         await interaction.response.send_message(
-            "❌ You can't trade with this player (a block exists between you two).",
-            ephemeral=True,
+            "You cannot begin a trade with a user that you have blocked.", ephemeral=True
         )
         return
-
+    if db.is_blocked(target_id, offerer_id):
+        await interaction.response.send_message(
+            "You cannot begin a trade with a user that has blocked you.", ephemeral=True
+        )
+        return
     if interaction.guild and db.is_guild_blacklisted(str(interaction.guild.id), offerer_id):
-        await interaction.response.send_message("❌ You are blacklisted in this server.", ephemeral=True)
-        return
-
-    trade_id = f"mt_{offerer_id}_{target_id}"
-    reverse  = f"mt_{target_id}_{offerer_id}"
-    if trade_id in _active_multi_trades or reverse in _active_multi_trades:
         await interaction.response.send_message(
-            "There's already an active trade between you two. Finish or cancel it first.",
-            ephemeral=True,
+            "You are blacklisted in this server.", ephemeral=True
         )
         return
 
-    all_cards = db.get_all_cards_sorted(offerer_id)
-    tradeable  = [c for c in all_cards if not _is_starter(c["id"])]
-    if not tradeable:
+    trade_id = f"t_{offerer_id}_{target_id}"
+    reverse  = f"t_{target_id}_{offerer_id}"
+    if trade_id in _active_trades or reverse in _active_trades:
         await interaction.response.send_message(
-            "You have no tradeable cards. Starter cards are protected.\n"
-            "Open packs with `/pack daily` or `/pack weekly` to get more!",
-            ephemeral=True,
+            "You already have an ongoing trade.", ephemeral=True
         )
         return
 
-    _active_multi_trades[trade_id] = {
-        "offerer_id":        offerer_id,
-        "target_id":         target_id,
-        "offerer_cards":     [],
-        "target_cards":      [],
-        "offerer_confirmed": False,
-        "target_confirmed":  False,
+    _active_trades[trade_id] = {
+        "offerer_id":       offerer_id,
+        "target_id":        target_id,
+        "offerer_cards":    [],
+        "target_cards":     [],
+        "offerer_locked":   False,
+        "target_locked":    False,
+        "offerer_accepted": False,
+        "target_accepted":  False,
     }
 
-    view = MultiTradeView(trade_id, interaction.user, player)
+    view = TradeProposalView(trade_id, interaction.user, player)
+    view.setup_embed()
+    _fill_trade_embed_fields(view.embed, _active_trades[trade_id], interaction.user, player)
+
     await interaction.response.send_message(
-        content=f"{interaction.user.mention} wants to trade with {player.mention}!",
-        embed=view.build_embed(),
+        content=f"Hey {player.mention}, {interaction.user.name} is proposing a trade with you!",
+        embed=view.embed,
         view=view,
     )
-    msg = await interaction.original_response()
-    view.message = msg
+    view.message = await interaction.original_response()
+    view._task   = bot.loop.create_task(view._update_loop())
+    await interaction.followup.send("Trade started!", ephemeral=True)
 
 
 # ==================== REGISTER COMMAND GROUPS ====================
@@ -5554,32 +5709,56 @@ async def trade_history_cmd(interaction: discord.Interaction, user: Optional[dis
 
 # ==================== GIVE / DONATE CARD ====================
 
-class GiveCardView(discord.ui.View):
-    def __init__(self, giver: discord.Member, receiver: discord.Member, card: Dict):
-        super().__init__(timeout=60)
-        self.giver = giver
-        self.receiver = receiver
-        self.card = card
-        self.responded = False
+class DonationRequest(discord.ui.View):
+    """BallsDex-style donation: emoji-only buttons, content-based messages."""
 
-    @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.success)
-    async def accept_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+    def __init__(self, giver: discord.Member, receiver: discord.Member, card: Dict):
+        super().__init__(timeout=120)
+        self.giver    = giver
+        self.receiver = receiver
+        self.card     = card
+        self.responded = False
+        self.message: Optional[discord.Message] = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.receiver.id:
-            await interaction.response.send_message("This gift isn't for you!", ephemeral=True)
-            return
+            await interaction.response.send_message(
+                "You are not allowed to interact with this menu.", ephemeral=True
+            )
+            return False
+        return True
+
+    async def on_timeout(self):
+        if not self.responded:
+            for item in self.children:
+                item.disabled = True  # type: ignore
+            if self.message:
+                try:
+                    await self.message.edit(view=self)
+                except Exception:
+                    pass
+
+    @discord.ui.button(style=discord.ButtonStyle.success,
+                       emoji="\N{HEAVY CHECK MARK}\N{VARIATION SELECTOR-16}")
+    async def accept(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.responded:
             await interaction.response.send_message("Already responded.", ephemeral=True)
             return
         self.responded = True
         self.stop()
+        for item in self.children:
+            item.disabled = True  # type: ignore
 
-        giver_id = str(self.giver.id)
+        giver_id    = str(self.giver.id)
         receiver_id = str(self.receiver.id)
 
         if not db.get_card_by_id(giver_id, self.card["id"]):
             await interaction.response.edit_message(
-                content=f"❌ The card **{self.card['name']}** is no longer available (already traded or sold).",
-                embed=None, view=None,
+                content=(
+                    interaction.message.content
+                    + "\n\N{CROSS MARK} This card is no longer available (already traded or sold)."
+                ),
+                view=self,
             )
             return
 
@@ -5589,65 +5768,44 @@ class GiveCardView(discord.ui.View):
         db.add_card_to_player(receiver_id, copy, self.card.get("type", "driver"))
         db.record_trade(giver_id, receiver_id, [self.card], [])
 
-        re = card_module.RARITY_EMOJIS.get(self.card.get("rarity", "common"), "")
-        embed = discord.Embed(
-            title="🎁  Gift Accepted!",
-            description=(
-                f"{self.receiver.mention} accepted **{re} {self.card['name']}** "
-                f"from {self.giver.mention}!\n\n"
-                f"*{self.card['rarity'].title()} card — now in {self.receiver.display_name}'s collection.*"
-            ),
-            color=0x2ECC71,
+        await interaction.response.edit_message(
+            content=interaction.message.content
+                    + "\n\N{WHITE HEAVY CHECK MARK} The donation was accepted!",
+            view=self,
         )
-        await interaction.response.edit_message(embed=embed, view=None)
 
-    @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.danger)
-    async def decline_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.receiver.id:
-            await interaction.response.send_message("This gift isn't for you!", ephemeral=True)
-            return
+    @discord.ui.button(style=discord.ButtonStyle.danger,
+                       emoji="\N{HEAVY MULTIPLICATION X}\N{VARIATION SELECTOR-16}")
+    async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
         if self.responded:
             await interaction.response.send_message("Already responded.", ephemeral=True)
             return
         self.responded = True
         self.stop()
-        embed = discord.Embed(
-            title="❌  Gift Declined",
-            description=f"{self.receiver.display_name} declined the gift from {self.giver.display_name}.",
-            color=0xE74C3C,
+        for item in self.children:
+            item.disabled = True  # type: ignore
+        await interaction.response.edit_message(
+            content=interaction.message.content
+                    + "\n\N{CROSS MARK} The donation was denied.",
+            view=self,
         )
-        await interaction.response.edit_message(embed=embed, view=None)
-
-    async def on_timeout(self):
-        if not self.responded:
-            for child in self.children:
-                child.disabled = True
-            if hasattr(self, "message") and self.message:
-                try:
-                    await self.message.edit(
-                        content="⏰ Gift offer expired — no response received.",
-                        view=self,
-                    )
-                except Exception:
-                    pass
 
 
 class GiveCardPickerView(discord.ui.View):
-    def __init__(self, giver: discord.Member, receiver: discord.Member, cards: List[Dict],
-                 interaction_ref: discord.Interaction):
+    """Ephemeral picker — giver selects which card to donate."""
+
+    def __init__(self, giver: discord.Member, receiver: discord.Member, cards: List[Dict]):
         super().__init__(timeout=60)
         self._cards: Dict[str, Dict] = {}
-        self.giver = giver
+        self.giver    = giver
         self.receiver = receiver
-        self._original = interaction_ref
 
         options = []
         for c in cards[:25]:
-            price = card_module.SELL_VALUES.get(c.get("rarity", "common"), 0)
             options.append(discord.SelectOption(
                 label=c["name"][:100],
                 value=c["id"],
-                description=f"{c.get('rarity','').title()} · worth {price:,} coins"[:100],
+                description=f"{c.get('rarity','').title()} · #{c['id'].upper()}"[:100],
                 emoji=card_module.RARITY_EMOJIS.get(c.get("rarity", "common"), None),
             ))
             self._cards[c["id"]] = c
@@ -5658,7 +5816,9 @@ class GiveCardPickerView(discord.ui.View):
 
     async def _on_select(self, interaction: discord.Interaction):
         if interaction.user.id != self.giver.id:
-            await interaction.response.send_message("Not your picker!", ephemeral=True)
+            await interaction.response.send_message(
+                "You are not allowed to interact with this menu.", ephemeral=True
+            )
             return
         card = self._cards.get(interaction.data["values"][0])
         if not card:
@@ -5666,19 +5826,15 @@ class GiveCardPickerView(discord.ui.View):
             return
         self.stop()
 
-        re = card_module.RARITY_EMOJIS.get(card.get("rarity", "common"), "")
-        embed = discord.Embed(
-            title="🎁  Card Gift Offer",
-            description=(
-                f"{self.giver.mention} wants to give **{re} {card['name']}** "
-                f"({card.get('rarity','').title()}) to {self.receiver.mention}!\n\n"
-                f"{self.receiver.mention} — do you accept this gift?"
-            ),
-            color=0xF39C12,
+        re    = card_module.RARITY_EMOJIS.get(card.get("rarity", "common"), "")
+        label = _card_label(card)
+        content = (
+            f"{self.receiver.mention}, {self.giver.name} wants to give you "
+            f"**{re} {card['name']}** ({card.get('rarity','').title()})!"
         )
-        view = GiveCardView(self.giver, self.receiver, card)
-        await interaction.response.edit_message(content=None, embed=embed, view=view)
-        msg = await interaction.original_response()
+        view = DonationRequest(self.giver, self.receiver, card)
+        await interaction.response.edit_message(content="Card selected!", view=None)
+        msg  = await interaction.followup.send(content=content, view=view)
         view.message = msg
 
 
@@ -5686,13 +5842,17 @@ class GiveCardPickerView(discord.ui.View):
 @app_commands.describe(user="The player to give the card to")
 async def give_command(interaction: discord.Interaction, user: discord.Member):
     if user.id == interaction.user.id:
-        await interaction.response.send_message("❌ You can't give cards to yourself!", ephemeral=True)
+        await interaction.response.send_message(
+            "You cannot give cards to yourself.", ephemeral=True
+        )
         return
     if user.bot:
-        await interaction.response.send_message("❌ You can't give cards to a bot!", ephemeral=True)
+        await interaction.response.send_message(
+            "You cannot give cards to a bot.", ephemeral=True
+        )
         return
 
-    giver_id = str(interaction.user.id)
+    giver_id    = str(interaction.user.id)
     receiver_id = str(user.id)
 
     db.ensure_player(giver_id, interaction.user.name)
@@ -5700,20 +5860,24 @@ async def give_command(interaction: discord.Interaction, user: discord.Member):
 
     if not db.player_exists(receiver_id):
         await interaction.response.send_message(
-            f"❌ **{user.display_name}** hasn't started playing yet.", ephemeral=True
+            f"{user.display_name} doesn't have any F1 cards yet.", ephemeral=True
         )
         return
-
     if db.is_blocked(giver_id, receiver_id):
         await interaction.response.send_message(
-            "❌ You can't give cards to this player (block exists).", ephemeral=True
+            "You cannot give cards to a user that you have blocked.", ephemeral=True
+        )
+        return
+    if db.is_blocked(receiver_id, giver_id):
+        await interaction.response.send_message(
+            "You cannot give cards to a user that has blocked you.", ephemeral=True
         )
         return
 
     privacy = db.get_privacy(receiver_id)
     if privacy.get("donation") == "deny":
         await interaction.response.send_message(
-            f"❌ **{user.display_name}** has disabled receiving gifts from other players.",
+            f"{user.display_name} has disabled receiving gifts from other players.",
             ephemeral=True,
         )
         return
@@ -5722,13 +5886,13 @@ async def give_command(interaction: discord.Interaction, user: discord.Member):
     tradeable = [c for c in all_cards if not _is_starter(c["id"])]
     if not tradeable:
         await interaction.response.send_message(
-            "❌ You have no tradeable cards. Starter cards are protected.", ephemeral=True
+            "You have no tradeable cards. Starter cards are protected.", ephemeral=True
         )
         return
 
-    view = GiveCardPickerView(interaction.user, user, tradeable, interaction)
+    view = GiveCardPickerView(interaction.user, user, tradeable)
     await interaction.response.send_message(
-        f"Pick a card to give to **{user.display_name}**:", view=view, ephemeral=False
+        f"Select a card to give to **{user.display_name}**:", view=view, ephemeral=True
     )
 
 

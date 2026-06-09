@@ -13,7 +13,7 @@
           "68F93B1"
         ]
       },
-      "last_daily_pack": "2026-05-27T07:47:14.979447",
+      "last_daily_pack": "2026-06-09T18:34:58.238962",
       "last_weekly_pack": "2026-05-27T07:46:27.025991",
       "stats": {
         "wins": 3,
@@ -287,6 +287,18 @@
             "rarity": "legendary",
             "obtained_at": "2026-06-01T07:46:03.287825",
             "caught_at": "2026-06-01T07:46:03.287825"
+          },
+          {
+            "id": "0E947DC",
+            "type": "team_asset",
+            "name": "Unknown",
+            "role": "Staff",
+            "team": "Unknown",
+            "effect": "aero",
+            "bonus": 0.01,
+            "rarity": "common",
+            "obtained_at": "2026-06-09T18:34:58.254001",
+            "obtained_by": "pack"
           }
         ]
       },
