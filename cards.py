@@ -218,6 +218,16 @@ def generate_pack(pack_type: str) -> List[Dict]:
 
     return cards
 
+def check_synergy(driver_code: str, car_team: str) -> Optional[Dict]:
+    """Return a synergy dict if the driver belongs to the same team as the car, else None."""
+    for rarity_pool in DRIVERS.values():
+        for driver in rarity_pool:
+            if driver.get("code") == driver_code:
+                if driver.get("team", "").lower() == car_team.lower():
+                    return {"name": f"{car_team} Synergy — home advantage!"}
+                return None
+    return None
+
 def generate_spawn_card() -> Dict:
     rarity = _roll_rarity({"mythic": 0.008, "legendary": 0.03, "epic": 0.12, "rare": 0.30, "common": 0.542})
     return _generate_card(rarity)

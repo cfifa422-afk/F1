@@ -388,6 +388,30 @@ class Database:
                 return i
         return None
 
+    def get_all_cards_sorted(self, player_id: str) -> List[Dict]:
+        """Return all cards for a player sorted by rarity (best first)."""
+        player = self.get_player(player_id)
+        if not player:
+            return []
+        rarity_order = {"mythic": 0, "legendary": 1, "epic": 2, "rare": 3, "common": 4}
+        all_cards = (
+            player["cards"].get("drivers", [])
+            + player["cards"].get("cars", [])
+            + player["cards"].get("team_assets", [])
+        )
+        return sorted(all_cards, key=lambda c: rarity_order.get(c.get("rarity", "common"), 4))
+
+    def has_card_name(self, player_id: str, name: str, card_type: str) -> bool:
+        """Return True if the player already owns a card with this name and type."""
+        player = self.get_player(player_id)
+        if not player:
+            return False
+        type_key = {"driver": "drivers", "car": "cars", "team_asset": "team_assets"}.get(card_type, card_type + "s")
+        for card in player["cards"].get(type_key, []):
+            if card.get("name") == name:
+                return True
+        return False
+
     def get_all_player_ids(self) -> List[str]:
         return list(self.data["players"].keys())
 
