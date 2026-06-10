@@ -2539,7 +2539,7 @@ class TradeConfirmView(discord.ui.View):
             for item in self.children:
                 item.disabled = True  # type: ignore
             self.embed.colour      = discord.Colour.green()
-            self.embed.description = "Trade concluded!"
+            self.embed.description = "The trade has been completed!"
             await self.message.edit(content=None, embed=self.embed, view=self)
             await interaction.followup.send("The trade is now concluded.", ephemeral=True)
         else:
@@ -2633,7 +2633,7 @@ async def f1_trade(interaction: discord.Interaction, player: discord.Member):
     )
     view.message = await interaction.original_response()
     view._task   = bot.loop.create_task(view._update_loop())
-    await interaction.followup.send("Trade started!", ephemeral=True)
+    await interaction.followup.send("The trade has started.", ephemeral=True)
 
 
 # ==================== REGISTER COMMAND GROUPS ====================
@@ -5473,127 +5473,135 @@ async def collection_slash(interaction: discord.Interaction, user: Optional[disc
         sp_lines.append(f"{sp_emoji} {name}: {cnt}")
 
     # ── Build embed ───────────────────────────────────────────────────────
-    e = discord.Embed(
-        title=f"Collection of {target.display_name}",
-        color=0xF1C40F if specials_list else 0x2d3436,
+    desc = (
+        f"**Total**: {total_all:,} "
+        f"({caught:,} caught, {traded:,} received from trade, {packed:,} packed)\n"
+        f"**Total Specials**: {len(specials_list):,}\n\n"
     )
-    e.set_thumbnail(url=target.display_avatar.url)
+    if sp_lines:
+        desc += "**Specials**:\n" + "\n".join(sp_lines) + "\n"
 
-    e.add_field(
-        name="📦  Overview",
-        value=(
-            f"**Total:** {total_all} "
-            f"({caught} caught, {traded} received from trade, {packed} packed)\n"
-            f"**Total Specials:** {len(specials_list)}"
-        ),
-        inline=False,
+    e = discord.Embed(
+        title=f"Collection of {target.display_name}" if not is_own else "Total Collection",
+        description=desc,
+        color=discord.Color.blurple(),
     )
+    e.set_author(name=target.display_name, icon_url=target.display_avatar.url)
 
     if rarity_lines:
         e.add_field(
-            name="✨  Rarity Breakdown",
+            name="Rarity Breakdown",
             value="\n".join(rarity_lines),
-            inline=True,
-        )
-
-    if sp_lines:
-        e.add_field(
-            name="🌟  Specials",
-            value="\n".join(sp_lines),
-            inline=True,
-        )
-    elif is_own:
-        e.add_field(
-            name="🌟  Specials",
-            value=(
-                "*No special cards yet.*\n"
-                "Catch wild cards to earn milestone specials,\n"
-                "or complete career races for GP cards!"
-            ),
-            inline=True,
+            inline=False,
         )
 
     coins = db.get_coins(target_id)
-    e.set_footer(text=f"💰 {coins:,} coins  ·  Use /f1 collection to browse individual cards")
+    e.set_footer(text=f"{coins:,} coins  ·  Use /f1 collection to browse individual cards")
 
     await interaction.followup.send(embed=e)
 
 
 # ==================== CONFIG: STATUS / ENABLE / DISABLE / BLACKLIST ====================
 
-@config_group.command(name="status", description="Show this server's current bot configuration")
+@config_group.command(name="status", description="Check the server configuration status.")
 @app_commands.default_permissions(manage_guild=True)
 async def config_status(interaction: discord.Interaction):
     if not _is_admin(interaction):
-        await interaction.response.send_message("❌ You need **Manage Server** permission.", ephemeral=True)
+        await interaction.response.send_message(
+            "You need the **Manage Server** permission to use this command.", ephemeral=True
+        )
         return
     gid = str(interaction.guild.id)
     channels = db.get_spawn_channels(gid)
-    enabled = db.is_spawn_enabled(gid)
-    cfg = db.get_guild_config(gid)
-    bl = cfg.get("blacklist", [])
+    enabled  = db.is_spawn_enabled(gid)
+    cfg      = db.get_guild_config(gid)
+    bl       = cfg.get("blacklist", [])
 
-    mentions = []
+    if not channels:
+        await interaction.response.send_message(
+            "F1 Card Bot is not configured in this server yet.\n"
+            "Please use `/channels add` to set a channel.",
+            ephemeral=False,
+        )
+        return
+
+    ch_id = channels[0]
+    ch    = interaction.guild.get_channel(int(ch_id))
+    all_mentions = []
     for cid in channels:
-        ch = interaction.guild.get_channel(int(cid))
-        mentions.append(ch.mention if ch else f"<deleted {cid}>")
+        c = interaction.guild.get_channel(int(cid))
+        all_mentions.append(c.mention if c else f"<deleted channel {cid}>")
 
-    embed = discord.Embed(
-        title=f"⚙️  Server Config — {interaction.guild.name}",
-        color=0x3498DB if enabled else 0xE74C3C,
-    )
-    embed.add_field(
-        name="🟢 Spawning" if enabled else "🔴 Spawning",
-        value="**Enabled**" if enabled else "**Disabled**\nUse `/config enable` to turn it on.",
-        inline=True,
-    )
-    embed.add_field(
-        name="📺 Spawn Channels",
-        value="\n".join(mentions) if mentions else "*None set — use `/channels add`*",
-        inline=True,
-    )
-    embed.add_field(
-        name="🚫 Blacklisted Users",
-        value=str(len(bl)) if bl else "None",
-        inline=True,
-    )
-    embed.set_footer(text="Use /config enable | /config disable | /channels add")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    if ch:
+        await interaction.response.send_message(
+            f"F1 Card Bot is configured in this server.\n"
+            f"Spawn channel{'s' if len(channels) > 1 else ''}: {', '.join(all_mentions)}\n"
+            f"Status: {'Enabled' if enabled else 'Disabled'}\n"
+            f"Blacklisted users: {len(bl)}",
+            ephemeral=False,
+        )
+    else:
+        await interaction.response.send_message(
+            "F1 Card Bot is configured, but the specified channel could not be found.\n"
+            "Please use `/channels add` to set it again.",
+            ephemeral=False,
+        )
 
 
-@config_group.command(name="enable", description="Enable wild card spawning in this server")
+@config_group.command(name="enable", description="Enable or disable F1 card spawning.")
 @app_commands.default_permissions(manage_guild=True)
 async def config_enable(interaction: discord.Interaction):
     if not _is_admin(interaction):
-        await interaction.response.send_message("❌ You need **Manage Server** permission.", ephemeral=True)
+        await interaction.response.send_message(
+            "You need the **Manage Server** permission to use this command.", ephemeral=True
+        )
         return
     gid = str(interaction.guild.id)
-    db.set_guild_spawn_enabled(gid, True)
-    embed = discord.Embed(
-        title="✅  Card Spawning Enabled",
-        description=(
-            "Wild F1 cards will now spawn in your configured channels.\n"
-            "Use `/channels add #channel` if you haven't set one up yet."
-        ),
-        color=0x2ECC71,
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    currently_enabled = db.is_spawn_enabled(gid)
+    if currently_enabled:
+        db.set_guild_spawn_enabled(gid, False)
+        await interaction.response.send_message(
+            "F1 Card Bot is now disabled in this server. Commands will still be available, "
+            "but the spawn of new F1 cards is suspended.\n"
+            "To re-enable the spawn, use the same command."
+        )
+    else:
+        db.set_guild_spawn_enabled(gid, True)
+        channels = db.get_spawn_channels(gid)
+        if channels:
+            ch_id = channels[0]
+            ch = interaction.guild.get_channel(int(ch_id))
+            if ch:
+                await interaction.response.send_message(
+                    f"F1 Card Bot is now enabled in this server, "
+                    f"F1 cards will start spawning soon in {ch.mention}."
+                )
+            else:
+                await interaction.response.send_message(
+                    "The spawning channel specified in the configuration is not available."
+                )
+        else:
+            await interaction.response.send_message(
+                "F1 Card Bot is now enabled in this server, however there is no spawning channel set. "
+                "Please configure one with `/channels add`."
+            )
 
 
 @config_group.command(name="disable", description="Disable wild card spawning in this server")
 @app_commands.default_permissions(manage_guild=True)
 async def config_disable(interaction: discord.Interaction):
     if not _is_admin(interaction):
-        await interaction.response.send_message("❌ You need **Manage Server** permission.", ephemeral=True)
+        await interaction.response.send_message(
+            "You need the **Manage Server** permission to use this command.", ephemeral=True
+        )
         return
     gid = str(interaction.guild.id)
     db.set_guild_spawn_enabled(gid, False)
-    embed = discord.Embed(
-        title="🔴  Card Spawning Disabled",
-        description="Wild cards will no longer spawn in this server. Use `/config enable` to re-enable.",
-        color=0xE74C3C,
+    await interaction.response.send_message(
+        "F1 Card Bot is now disabled in this server. Commands will still be available, "
+        "but the spawn of new F1 cards is suspended.\n"
+        "To re-enable the spawn, use `/config enable`."
     )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 blacklist_group = app_commands.Group(
@@ -5964,19 +5972,30 @@ async def completion_command(interaction: discord.Interaction, user: Optional[di
             for c in missing[:15]
         )
 
-    embed = discord.Embed(
-        title=f"🏁  {target.display_name}'s Collection Progress",
-        description=(
-            f"`[{bar}]`  **{owned_count}/{total}** cards  ({pct:.1f}%)\n\n"
-            + "\n".join(rarity_lines)
-            + missing_str
-        ),
-        color=0x2ECC71 if pct == 100 else (0xF39C12 if pct >= 50 else 0x3498DB),
-    )
+    progression = round(pct, 1)
+    text = f"## F1 Card Bot progression: **{progression}%**\n"
+    for line in rarity_lines:
+        text += line + "\n"
+    if missing_str:
+        text += missing_str
+
     if pct == 100:
-        embed.set_footer(text="🏆 COMPLETE! You've caught 'em all!")
+        text += "\n### :tada: No missing F1 cards, congratulations! :tada:"
+
+    embed = discord.Embed(
+        description=text,
+        color=discord.Color.blurple(),
+    )
+    if target != interaction.user:
+        embed.set_author(
+            name=f"Viewing {target.display_name}'s completion",
+            icon_url=target.display_avatar.url,
+        )
     else:
-        embed.set_footer(text=f"{total - owned_count} cards still to find · Use /f1 collection for full details")
+        embed.set_author(
+            name=f"{interaction.user.display_name}'s completion",
+            icon_url=interaction.user.display_avatar.url,
+        )
 
     await interaction.response.send_message(embed=embed)
 
@@ -6252,95 +6271,102 @@ async def coinflip_command(interaction: discord.Interaction, user: discord.Membe
 
 # ==================== PLAYER GROUP ====================
 
-player_group = app_commands.Group(name="player", description="Manage your profile, friends, blocks and settings")
-player_friend_group = app_commands.Group(name="friend", description="Friends system", parent=player_group)
-player_block_group  = app_commands.Group(name="block",  description="Block system",   parent=player_group)
+player_group       = app_commands.Group(name="player", description="Manage your profile, blocks and settings")
+player_block_group = app_commands.Group(name="block",  description="Block commands", parent=player_group)
 
 
-@player_group.command(name="info", description="View detailed stats for yourself or another player")
-@app_commands.describe(user="Player to inspect (default: yourself)")
-async def player_info(interaction: discord.Interaction, user: Optional[discord.Member] = None):
-    target = user or interaction.user
-    pid = str(target.id)
+# ── /player info ──────────────────────────────────────────────────────────────
 
-    db.ensure_player(str(interaction.user.id), interaction.user.name)
+@player_group.command(name="info", description="Display some of your info in the bot!")
+async def player_info(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    pid = str(interaction.user.id)
+    db.ensure_player(pid, interaction.user.name)
 
     if not db.player_exists(pid):
-        who = "You haven't" if not user else f"**{target.display_name}** hasn't"
-        await interaction.response.send_message(f"{who} started playing yet!", ephemeral=True)
+        await interaction.followup.send("You haven't got any info to show!", ephemeral=True)
         return
 
-    if user and user.id != interaction.user.id:
-        privacy = db.get_privacy(pid)
-        if privacy.get("inventory") == "private":
-            await interaction.response.send_message(
-                f"🔒 **{target.display_name}**'s profile is private.", ephemeral=True
-            )
-            return
+    user   = interaction.user
+    cards  = db.get_all_cards_sorted(pid)
+    stats  = db.get_player(pid).get("stats", {})
+    coins  = db.get_coins(pid)
+    blocks = len(db.get_blocks(pid))
+    trades = db.get_trade_history(pid) if hasattr(db, "get_trade_history") else []
 
-    cards = db.get_all_cards_sorted(pid)
-    stats = db.get_player(pid).get("stats", {})
-    coins = db.get_coins(pid)
-    friends = db.get_friends(pid)
-    career = db.get_player(pid).get("career", {})
+    wins   = stats.get("wins",   0)
+    losses = stats.get("losses", 0)
+    dnfs   = stats.get("dnf",    0)
+    total_races = stats.get("total_races", wins + losses + dnfs)
+    catches = stats.get("catches", 0)
 
-    wins  = stats.get("wins",  0)
-    losses= stats.get("losses",0)
-    dnfs  = stats.get("dnf",   0)
-    total = stats.get("total_races", wins + losses + dnfs)
-    win_rate = f"{(wins/total*100):.1f}%" if total > 0 else "N/A"
+    # Completion %
+    all_possible = card_module.ALL_CARDS if hasattr(card_module, "ALL_CARDS") else []
+    if not all_possible:
+        all_possible = list(card_module.DRIVER_POOL) + list(card_module.CAR_POOL)
+    owned_names = {c["name"] for c in cards}
+    owned_ids   = {c["id"]   for c in cards}
+    total_possible = len(all_possible)
+    owned_count = sum(1 for c in all_possible if c.get("name") in owned_names or c.get("id") in owned_ids) if all_possible else 0
+    completion_pct = f"{round(owned_count / total_possible * 100, 1)}%" if total_possible > 0 else "0.0%"
 
-    rarity_counts: Dict[str, int] = {}
-    for c in cards:
-        r = c.get("rarity","common")
-        rarity_counts[r] = rarity_counts.get(r, 0) + 1
+    # Source breakdown
+    caught = sum(1 for c in cards if c.get("obtained_by") == "catch" or c.get("caught_at"))
+    traded = sum(1 for c in cards if c.get("obtained_by") == "trade")
 
-    rarity_order = ["special","mythic","legendary","epic","rare","common"]
-    rarity_str = "  ".join(
-        f"{card_module.RARITY_EMOJIS.get(r,'')} {rarity_counts[r]}"
-        for r in rarity_order if r in rarity_counts
-    ) or "*No cards yet*"
+    # Privacy / donation settings
+    privacy    = db.get_privacy(pid)
+    inv_policy = privacy.get("inventory", "public").title()
+    don_policy = privacy.get("donation",  "ask").title()
 
     embed = discord.Embed(
-        title=f"👤  {target.display_name}'s Profile",
-        color=0x3498DB,
+        title=f"**{user.display_name.title()}'s F1 Card Bot Info**",
+        color=discord.Color.blurple(),
     )
-    embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="🃏 Cards", value=f"**{len(cards)}** total\n{rarity_str}", inline=False)
-    embed.add_field(name="🏆 Race Record", value=f"W {wins} / L {losses} / DNF {dnfs}  ({win_rate} win rate)", inline=True)
-    embed.add_field(name="💰 Coins",        value=f"{coins:,}", inline=True)
-    embed.add_field(name="👥 Friends",      value=str(len(friends)), inline=True)
+    embed.description = (
+        "Here are your statistics and settings in the bot!\n"
+        "## Player Settings\n"
+        f"**Privacy Policy:** {inv_policy}\n"
+        f"**Donation Policy:** {don_policy}\n"
+        f"**Amount of Blocked Users:** {blocks}\n"
+        "## Player Stats\n"
+        f"**Completion:** {completion_pct}\n"
+        f"**F1 Cards Owned:** {len(cards):,}\n"
+        f"**Caught Cards Owned:** {caught:,}\n"
+        f"**Received from Trades:** {traded:,}\n"
+        f"**Coins:** {coins:,}\n"
+        f"**Race Record:** W {wins} / L {losses} / DNF {dnfs}\n"
+        f"**Wild Catches:** {catches:,}\n"
+    )
+    embed.set_footer(text="Keep collecting and trading to improve your stats!")
+    embed.set_thumbnail(url=user.display_avatar.url)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
-    if career:
-        pts = career.get("championship_points", 0)
-        pos = career.get("standing", "?")
-        embed.add_field(name="⭐ Career", value=f"**{pts} pts** · P{pos}", inline=True)
 
-    await interaction.response.send_message(embed=embed)
+# ── /player settings ──────────────────────────────────────────────────────────
 
-
-@player_group.command(name="settings", description="View and change your privacy settings")
+@player_group.command(name="settings", description="Edit your player settings")
 async def player_settings(interaction: discord.Interaction):
     pid = str(interaction.user.id)
     db.ensure_player(pid, interaction.user.name)
     privacy = db.get_privacy(pid)
 
     inv = privacy.get("inventory", "public")
-    don = privacy.get("donation", "ask")
+    don = privacy.get("donation",  "ask")
 
     embed = discord.Embed(
-        title="⚙️  Player Settings",
-        description="Use the dropdowns below to change your privacy preferences.",
-        color=0x3498DB,
+        title="Player settings",
+        description="Configure your personal settings here.",
+        color=discord.Color.blurple(),
     )
     embed.add_field(
-        name="👁️ Collection Visibility",
-        value=f"Currently: **{inv.title()}**\n`public` — anyone can view · `private` — only you",
+        name="Inventory privacy",
+        value=f"Who should be able to view your inventory.\nCurrently: **{inv.title()}**",
         inline=False,
     )
     embed.add_field(
-        name="🎁 Gift / Donation Policy",
-        value=f"Currently: **{don.title()}**\n`ask` — you get a prompt · `deny` — refuse all gifts",
+        name="Donation policy",
+        value=f"Who should be able to donate F1 cards.\nCurrently: **{don.title()}**",
         inline=False,
     )
 
@@ -6349,192 +6375,195 @@ async def player_settings(interaction: discord.Interaction):
             super().__init__(timeout=120)
 
             inv_sel = discord.ui.Select(
-                placeholder=f"Collection: {inv.title()}",
+                placeholder="Inventory privacy",
                 options=[
-                    discord.SelectOption(label="Public  — anyone can view", value="public", default=(inv == "public")),
-                    discord.SelectOption(label="Private — only you",         value="private", default=(inv == "private")),
+                    discord.SelectOption(label="Open — anyone can view",   value="public",  default=(inv == "public")),
+                    discord.SelectOption(label="Private — only you",        value="private", default=(inv == "private")),
                 ],
-                custom_id="inv_sel",
             )
             inv_sel.callback = self_inner._inv_cb
             self_inner.add_item(inv_sel)
 
             don_sel = discord.ui.Select(
-                placeholder=f"Gifts: {don.title()}",
+                placeholder="Donation policy",
                 options=[
-                    discord.SelectOption(label="Ask    — show me a prompt",   value="ask",  default=(don == "ask")),
-                    discord.SelectOption(label="Deny   — refuse all gifts",    value="deny", default=(don == "deny")),
+                    discord.SelectOption(label="Always accept",     value="always_accept", default=(don == "always_accept")),
+                    discord.SelectOption(label="Needs approval",    value="ask",           default=(don in ("ask", "request_approval"))),
+                    discord.SelectOption(label="Closed",            value="deny",          default=(don == "deny")),
                 ],
-                custom_id="don_sel",
             )
             don_sel.callback = self_inner._don_cb
             self_inner.add_item(don_sel)
 
-        async def _inv_cb(self_inner, interaction2: discord.Interaction):
+        async def interaction_check(self_inner, interaction2: discord.Interaction) -> bool:
             if interaction2.user.id != interaction.user.id:
-                await interaction2.response.send_message("Not your settings!", ephemeral=True)
-                return
+                await interaction2.response.send_message(
+                    "You are not allowed to interact with this!", ephemeral=True
+                )
+                return False
+            return True
+
+        async def _inv_cb(self_inner, interaction2: discord.Interaction):
             val = interaction2.data["values"][0]
             db.set_privacy(pid, "inventory", val)
+            label = {"public": "Open", "private": "Private"}.get(val, val.title())
             await interaction2.response.send_message(
-                f"✅ Collection visibility set to **{val.title()}**.", ephemeral=True
+                f"Inventory privacy set to **{label}**.", ephemeral=True
             )
 
         async def _don_cb(self_inner, interaction2: discord.Interaction):
-            if interaction2.user.id != interaction.user.id:
-                await interaction2.response.send_message("Not your settings!", ephemeral=True)
-                return
             val = interaction2.data["values"][0]
             db.set_privacy(pid, "donation", val)
+            label = {"always_accept": "Always accept", "ask": "Needs approval", "deny": "Closed"}.get(val, val.title())
             await interaction2.response.send_message(
-                f"✅ Gift policy set to **{val.title()}**.", ephemeral=True
+                f"Donation policy set to **{label}**.", ephemeral=True
             )
 
     await interaction.response.send_message(embed=embed, view=SettingsView(), ephemeral=True)
 
 
-# ── Friend subcommands ─────────────────────────────────────────────────────────
+# ── /player block add / remove / list ─────────────────────────────────────────
 
-@player_friend_group.command(name="add", description="Add another player as a friend")
-@app_commands.describe(user="Player to add as a friend")
-async def friend_add(interaction: discord.Interaction, user: discord.Member):
-    if user.id == interaction.user.id:
-        await interaction.response.send_message("❌ You can't friend yourself!", ephemeral=True)
-        return
-    if user.bot:
-        await interaction.response.send_message("❌ You can't friend a bot!", ephemeral=True)
-        return
-
-    pid  = str(interaction.user.id)
-    fid  = str(user.id)
-    db.ensure_player(pid, interaction.user.name)
-
-    if not db.player_exists(fid):
-        await interaction.response.send_message(f"❌ **{user.display_name}** hasn't started playing yet.", ephemeral=True)
-        return
-    if db.is_blocked(pid, fid):
-        await interaction.response.send_message("❌ You can't friend this player (block exists).", ephemeral=True)
-        return
-    if db.are_friends(pid, fid):
-        await interaction.response.send_message(f"ℹ️ You're already friends with **{user.display_name}**.", ephemeral=True)
-        return
-
-    db.add_friend(pid, fid)
-    await interaction.response.send_message(
-        f"✅ You and **{user.display_name}** are now friends! 🤝", ephemeral=False
-    )
-
-
-@player_friend_group.command(name="remove", description="Remove a player from your friends list")
-@app_commands.describe(user="Player to remove from friends")
-async def friend_remove(interaction: discord.Interaction, user: discord.Member):
-    pid = str(interaction.user.id)
-    fid = str(user.id)
-    db.ensure_player(pid, interaction.user.name)
-
-    if db.remove_friend(pid, fid):
-        await interaction.response.send_message(
-            f"✅ Removed **{user.display_name}** from your friends list.", ephemeral=True
-        )
-    else:
-        await interaction.response.send_message(
-            f"ℹ️ **{user.display_name}** wasn't in your friends list.", ephemeral=True
-        )
-
-
-@player_friend_group.command(name="list", description="Show your friends list")
-async def friend_list(interaction: discord.Interaction):
-    pid = str(interaction.user.id)
-    db.ensure_player(pid, interaction.user.name)
-    friends = db.get_friends(pid)
-
-    if not friends:
-        await interaction.response.send_message(
-            "👥 Your friends list is empty.\nUse `/player friend add @user` to add someone!", ephemeral=True
-        )
-        return
-
-    lines = []
-    for fid in friends:
-        member = interaction.guild.get_member(int(fid)) if interaction.guild else None
-        name = member.display_name if member else f"Player {fid[:6]}…"
-        friends_back = "✅" if db.are_friends(fid, pid) else "➕"
-        lines.append(f"{friends_back} **{name}**")
-
-    embed = discord.Embed(
-        title=f"👥  {interaction.user.display_name}'s Friends ({len(friends)})",
-        description="\n".join(lines),
-        color=0x2ECC71,
-    )
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
-# ── Block subcommands ──────────────────────────────────────────────────────────
-
-@player_block_group.command(name="add", description="Block a player from trading or gifting with you")
-@app_commands.describe(user="Player to block")
+@player_block_group.command(name="add", description="Block another user.")
+@app_commands.describe(user="The user you want to block.")
 async def block_add(interaction: discord.Interaction, user: discord.Member):
     if user.id == interaction.user.id:
-        await interaction.response.send_message("❌ You can't block yourself!", ephemeral=True)
+        await interaction.response.send_message("You cannot block yourself.", ephemeral=True)
+        return
+    if user.bot:
+        await interaction.response.send_message("You cannot block a bot.", ephemeral=True)
         return
     pid = str(interaction.user.id)
     bid = str(user.id)
     db.ensure_player(pid, interaction.user.name)
 
-    if db.add_block(pid, bid):
-        await interaction.response.send_message(
-            f"🚫 **{user.display_name}** has been blocked. They can no longer trade with or gift you.",
-            ephemeral=True,
-        )
-    else:
-        await interaction.response.send_message(
-            f"ℹ️ **{user.display_name}** is already blocked.", ephemeral=True
-        )
+    if db.is_blocked(pid, bid):
+        await interaction.response.send_message("You have already blocked this user.", ephemeral=True)
+        return
+
+    db.add_block(pid, bid)
+    await interaction.response.send_message(
+        f"You have now blocked {user.name}.", ephemeral=True
+    )
 
 
-@player_block_group.command(name="remove", description="Unblock a player")
-@app_commands.describe(user="Player to unblock")
+@player_block_group.command(name="remove", description="Unblock a user.")
+@app_commands.describe(user="The user you want to unblock.")
 async def block_remove(interaction: discord.Interaction, user: discord.Member):
+    if user.id == interaction.user.id:
+        await interaction.response.send_message("You cannot unblock yourself.", ephemeral=True)
+        return
     pid = str(interaction.user.id)
     bid = str(user.id)
     db.ensure_player(pid, interaction.user.name)
 
-    if db.remove_block(pid, bid):
-        await interaction.response.send_message(
-            f"✅ **{user.display_name}** has been unblocked.", ephemeral=True
-        )
-    else:
-        await interaction.response.send_message(
-            f"ℹ️ **{user.display_name}** isn't on your block list.", ephemeral=True
-        )
+    if not db.is_blocked(pid, bid):
+        await interaction.response.send_message("This user isn't blocked.", ephemeral=True)
+        return
+
+    db.remove_block(pid, bid)
+    await interaction.response.send_message(f"{user.name} has been unblocked.", ephemeral=True)
 
 
-@player_block_group.command(name="list", description="See who you've blocked")
+@player_block_group.command(name="list", description="View all the users you have blocked.")
 async def block_list(interaction: discord.Interaction):
     pid = str(interaction.user.id)
     db.ensure_player(pid, interaction.user.name)
     blocks = db.get_blocks(pid)
 
     if not blocks:
-        await interaction.response.send_message("✅ Your block list is empty.", ephemeral=True)
+        await interaction.response.send_message("You haven't blocked any users!", ephemeral=True)
         return
 
     lines = []
     for bid in blocks:
-        member = interaction.guild.get_member(int(bid)) if interaction.guild else None
-        name = member.display_name if member else f"Player {bid[:6]}…"
-        lines.append(f"🚫 **{name}**")
+        lines.append(f"<@{bid}>")
 
     embed = discord.Embed(
-        title=f"🚫  Block List ({len(blocks)})",
+        title="Your block list",
         description="\n".join(lines),
-        color=0xE74C3C,
+        color=discord.Color.blurple(),
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# ==================== ABOUT / HELP ====================
 
-# ── Block protection in /f1 trade ────────────────────────────────────────────
-# (trade already has a check; this is a helper used by give/coinflip)
+@bot.tree.command(name="about", description="Get information about this bot.")
+async def about_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="F1 Card Bot",
+        color=discord.Color.blurple(),
+    )
+    assert bot.user
+    total_players = len([p for p in db.get_all_players()]) if hasattr(db, "get_all_players") else 0
+    embed.description = (
+        "An F1 card collection and racing Discord bot inspired by BallsDex.\n\n"
+        "Collect F1 driver and car cards, race against friends, trade with other players, "
+        "and build your ultimate F1 collection!\n\n"
+        f"**{len(bot.guilds):,}** servers playing\n\n"
+        "Use `/help` to see the list of commands."
+    )
+    embed.set_thumbnail(url=bot.user.display_avatar.url)
+    v = __import__("sys").version_info
+    embed.set_footer(text=f"Python {v.major}.{v.minor}.{v.micro} • discord.py {discord.__version__}")
+    await interaction.response.send_message(embed=embed)
+
+
+@bot.tree.command(name="help", description="Show the list of commands from the bot.")
+async def help_command(interaction: discord.Interaction):
+    assert bot.user
+    embed = discord.Embed(
+        title="F1 Card Bot — help menu",
+        color=discord.Color.blurple(),
+    )
+    embed.set_thumbnail(url=bot.user.display_avatar.url)
+
+    commands_info = {
+        "🃏 Cards & Collection": (
+            "`/f1 collection` — Browse your F1 card collection\n"
+            "`/f1 trade` — Trade cards with another player\n"
+            "`/f1 list` — List all your cards\n"
+            "`/f1 equip` — Equip a driver and car for racing\n"
+            "`/give` — Donate a card to another player\n"
+            "`/collection` — View collection stats\n"
+            "`/completion` — Show your collection progress\n"
+            "`/search` — Search for a specific card\n"
+            "`/sell` — Sell cards for coins"
+        ),
+        "🏎️ Racing": (
+            "`/race` — Start a race\n"
+            "`/leaderboard` — View the server leaderboard\n"
+            "`/profile` — View your race profile\n"
+            "`/upgrade` — Upgrade your cards"
+        ),
+        "📦 Packs & Shop": (
+            "`/pack open` — Open a card pack\n"
+            "`/shop` — Browse the pack shop"
+        ),
+        "👤 Player": (
+            "`/player info` — View your bot statistics\n"
+            "`/player settings` — Configure your privacy settings\n"
+            "`/player block add` — Block a user\n"
+            "`/player block remove` — Unblock a user\n"
+            "`/player block list` — View your block list"
+        ),
+        "⚙️ Server Config (Admin)": (
+            "`/channels add` — Set a card spawn channel\n"
+            "`/channels remove` — Remove a spawn channel\n"
+            "`/channels list` — List spawn channels\n"
+            "`/config status` — Check server configuration\n"
+            "`/config enable` — Enable card spawning\n"
+            "`/config disable` — Disable card spawning\n"
+            "`/blacklist add/remove/list` — Manage server blacklist"
+        ),
+    }
+
+    for name, value in commands_info.items():
+        embed.add_field(name=name, value=value, inline=False)
+
+    embed.set_footer(text="Wild F1 cards spawn automatically in configured channels!")
+    await interaction.response.send_message(embed=embed)
+
 
 # ==================== REGISTER NEW COMMAND GROUPS ====================
 
